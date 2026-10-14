@@ -139,7 +139,7 @@ class GuildSettings:
     young_roles: str | None = None       # teen roles
     older_roles: str | None = None  # old 16-17 roles
     adult_roles: str | None = None       # 18+
-    no_age_role: str = "adult"           # members with no age role count as "adult", or "ignore"
+    no_age_role: str = "adult"           # members with no age role count as "adult", "teen" or "ignore"
     contact_filter: bool = True
     teen_restrict: bool = True  # keep away after 2 reports
     risk_mode: str = "test"              # Warning Signs: off, test or on
@@ -162,9 +162,14 @@ class GuildSettings:
     def role_ids(self, field: str) -> set[int]:
         return {int(r) for r in (getattr(self, field) or "").split(",") if r.isdigit()}
 
+    # teen by default: only an 18+ role, everyone without it is protected as a teen
+    @property
+    def teen_default(self) -> bool:
+        return self.no_age_role == "teen"
+
     @property
     def teen_safety(self) -> bool:
-        return bool(self.young_roles or self.older_roles)
+        return bool(self.young_roles or self.older_roles or (self.teen_default and self.adult_roles))
 
     @property
     def languages(self) -> tuple[str, ...]:

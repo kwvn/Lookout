@@ -132,6 +132,11 @@ class LookoutBot(commands.AutoShardedBot):
                 ui_kit.ICONS[key] = str(await self._icon(existing, key, name, path.read_bytes()))
             except Exception as e:
                 log.warning("Couldn't load the %s icon: %s", key, e)
+        for path in sorted((config.ASSETS / "meerkat").glob("looky_*.png")):  # the meerkat pack
+            try:
+                ui_kit.ICONS[path.stem] = str(await self._icon(existing, path.stem, path.stem, path.read_bytes()))
+            except Exception as e:
+                log.warning("Couldn't load the %s emoji: %s", path.stem, e)
 
     async def _icon(self, existing: list[discord.Emoji], key: str, name: str, image: bytes) -> discord.Emoji:
         code = hashlib.md5(image).hexdigest()
@@ -180,7 +185,8 @@ class LookoutBot(commands.AutoShardedBot):
         files = []
         if channel.permissions_for(me).attach_files:
             files = [discord.File(io.BytesIO(await asyncio.to_thread(chart.welcome_banner)), filename="welcome.png")]
-        view = ui_kit.boxes("Thanks for Adding Lookout", "Setup takes about a minute.", [
+        title = ui_kit.titled(ui_kit.mascot("hi"), "Thanks for Adding Lookout")
+        view = ui_kit.boxes(title, "Setup takes about a minute.", [
             ("settings", "Get Started", "Press **Set Up** and pick your mod channel, mod role and age roles.\n"
                                         "-# Only admins can do this.",
              [discord.ui.Button(label="Set Up", custom_id="lksetup:start")]),

@@ -59,6 +59,12 @@ def tidy(text: str | None) -> str | None:
     return "".join(out)
 
 
+# lookout's meerkat, only for the friendly messages. falls back to a normal icon if it isn't loaded
+def mascot(mood: str, fallback: str = "") -> str:
+    key = f"looky_{mood}"
+    return key if key in ICONS else fallback
+
+
 def titled(key: str, text: str) -> str:
     icon = ICONS.get(key)
     return f"{icon} {text}" if icon else text
