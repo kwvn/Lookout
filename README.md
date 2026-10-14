@@ -1,3 +1,5 @@
+![Lookout](.github/banner.gif)
+
 ## Lookout
 
 A teen safety bot for Discord servers where teens and adults hang out together.
