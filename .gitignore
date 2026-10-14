@@ -1,0 +1,5 @@
+.env
+lookout.db
+wordlists.py
+__pycache__/
+venv/
