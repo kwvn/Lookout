@@ -392,8 +392,9 @@ class Reports(commands.Cog):
             else:
                 shot_sent = " Your screenshot went with it."
         if not by_mod:
-            thanks = (f"**Sent to the mods of {discord.utils.escape_markdown(guild.name)}.** Only they can see your "
-                      "report." if dm else "**Thanks for letting us know.** Only the mods can see your report.")
+            thanks = ui_kit.titled(ui_kit.mascot("thumbsup"), (
+                f"**Sent to the mods of {discord.utils.escape_markdown(guild.name)}.** Only they can see your report."
+                if dm else "**Thanks for letting us know.** Only the mods can see your report."))
             await reply(thanks + shot_sent + ("\n-# If you feel unsafe in voice, you can leave anytime." if voice else "")
                         + shot_note, buttons=[ui_kit.block_button()])
 

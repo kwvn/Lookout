@@ -94,7 +94,7 @@ class Help(commands.Cog):
                                                                "Message to Mods**." if add_app else ""),
                   [add_app] if add_app else None)]
         if s.teen_safety:
-            items.append(("brand", "Teen Safety Is On",
+            items.append(("brand", ui_kit.titled(ui_kit.mascot("watching"), "Teen Safety Is On"),
                           "Inappropriate messages and contact info that adults send to teens get removed, and the "
                           "mods are told.\n-# Lookout never reads your DMs or listens to voice. It only sees a DM "
                           "you report yourself.", None))

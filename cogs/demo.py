@@ -40,6 +40,7 @@ def _step(page: int) -> str:
 
 def _card(page: int, name: str, *sections, subtitle: str | None = None, **kwargs):
     sub = f"**{name}** · {_step(page)}" + (f" · {subtitle}" if subtitle else "")
+    sub = ui_kit.titled(ui_kit.mascot("watching"), sub)
     return ui_kit.card("Demo", *sections, subtitle=sub, icon="brand", **kwargs)
 
 

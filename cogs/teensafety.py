@@ -223,13 +223,15 @@ class TeenSafety(commands.Cog):
 
     # roles
 
-    # TEEN or ADULT. no age role counts as ADULT unless the server ignores those
+    # TEEN or ADULT. no age role counts as TEEN with teen by default, otherwise ADULT unless the server ignores those
     def band(self, member: discord.Member, s: db.GuildSettings, explicit: bool = False) -> int | None:
         ids = {r.id for r in getattr(member, "roles", [])}
         if ids & (s.role_ids("young_roles") | s.role_ids("older_roles")):
             return TEEN
         if ids & s.role_ids("adult_roles"):
             return ADULT
+        if s.teen_default:
+            return TEEN
         return None if explicit or s.no_age_role == "ignore" else ADULT
 
     def exempt(self, member) -> bool:
@@ -510,7 +512,7 @@ class TeenSafety(commands.Cog):
         if add_app:
             buttons.append(add_app)
         view = ui_kit.card(
-            ui_kit.titled("brand", "Before You Start Chatting"),
+            ui_kit.titled(ui_kit.mascot("hi", "brand"), "Before You Start Chatting"),
             f"You have a teen role in **{name}**, so here are a few things that help you stay safe there.",
             ("Control Who Can DM You", "Click the server's name, open **Privacy Settings** and turn off **Direct "
                                        "Messages**. People can still talk to you in the server, where the mods can "
@@ -543,7 +545,7 @@ class TeenSafety(commands.Cog):
         buttons = [self._btn(f"Change It to {clean}"[:80], "nick", guild.id, member.id),
                    self._btn("Keep It", "nickkeep", guild.id, member.id)] if can_fix else None
         view = ui_kit.card(
-            ui_kit.titled("warning", "Your Nickname Shares a Lot"),
+            ui_kit.titled(ui_kit.mascot("watching", "warning"), "Your Nickname Shares a Lot"),
             f"Your nickname in **{name}** is **{discord.utils.escape_markdown(nick)}**. Everyone there can see {shows}.",
             ("Good to Know", "A nickname without your age, school or city is safer. You can change it anytime in your "
                              "server profile" + (", or let Lookout do it for you." if can_fix else ".")),
@@ -562,7 +564,7 @@ class TeenSafety(commands.Cog):
         name = discord.utils.escape_markdown(guild.name)
         flirty = db.get_settings(guild.id).flirty_filter
         view = ui_kit.card(
-            ui_kit.titled("warning", "Your Photo Is Public"),
+            ui_kit.titled(ui_kit.mascot("watching", "warning"), "Your Photo Is Public"),
             f"You posted a photo in {message.channel.mention}. Everyone in **{name}** can see it and save it.",
             ("Good to Know", ("If an adult replies with something inappropriate, Lookout removes it and tells the "
                               "mods.\n" if flirty else "") + "Changed your mind? Hover over the message, press the "
@@ -638,7 +640,10 @@ class TeenSafety(commands.Cog):
     # age mismatch, once per member. lookout can't change roles so it's only ever a note for the mods
 
     async def _check_age(self, message: discord.Message, member: discord.Member, age: int, s) -> None:
-        band = self.band(member, s, explicit=True)
+        # real roles only, with teen by default an unverified adult isn't a mismatch
+        ids = {r.id for r in member.roles}
+        band = (TEEN if ids & (s.role_ids("young_roles") | s.role_ids("older_roles"))
+                else ADULT if ids & s.role_ids("adult_roles") else None)
         if band == ADULT and age <= 17:
             roles = s.role_ids("adult_roles")
             why = (f"If they're {age}, Lookout treats them as an adult, so messages adults send them aren't checked. "

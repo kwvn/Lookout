@@ -20,6 +20,9 @@ TEST_DAYS = 7  # warning signs test mode, in days
 
 REMINDERS = [(0, "Off"), (5, "One ping after 5 minutes"), (10, "One ping after 10 minutes"),
              (15, "One ping after 15 minutes"), (30, "One ping after 30 minutes")]
+AGE_MODES = [("tbd", "Teen by Default (safest)"), ("roles", "Teen and Adult Roles")]
+ADULT_TIP = ("**Tip:** make an age-restricted channel with a reaction role for 18+. Discord only lets verified adults "
+             "into age-restricted channels, so only real adults can get the role.")
 PROTECTIONS = [
     ("flirty_filter", "Message Filter", "Removes inappropriate messages adults send to teens."),
     ("contact_filter", "Contact Info Filter", "Removes phone numbers, emails and socials sent to teens."),
@@ -37,9 +40,10 @@ TOGGLES = {name: (title, text) for name, title, text in PROTECTIONS} | {
     "image_scan": ("Image Filter", "Removes inappropriate images as soon as they're posted."),
     "weekly_summary": ("Weekly Summary", "Posts the week's numbers in the mod channel every Monday."),
 }
-PAGE_OF = {"filter_languages": "langs", "staff_channel": "staff", "staff_role": "staff", "reminder": "staff", "young_roles": "ages",
-           "adult_roles": "ages", "no_age_role": "ages", "age_check": "ages", "post_panel": "reports", "post_tips": "reports",
-           "report_updates": "reports", "appeals": "reports", "image_scan": "extras", "weekly_summary": "extras"}
+PAGE_OF = {"filter_languages": "langs", "staff_channel": "staff", "staff_role": "staff", "reminder": "staff",
+           "young_roles": "ages", "adult_roles": "ages", "no_age_role": "ages", "age_check": "ages", "age_mode": "ages",
+           "post_panel": "reports", "post_tips": "reports", "report_updates": "reports", "appeals": "reports",
+           "image_scan": "extras", "weekly_summary": "extras"}
 VERIFICATION = {
     discord.VerificationLevel.none: "None. Anyone can chat right away.",
     discord.VerificationLevel.low: "Low. Members only need a verified email.",
@@ -125,6 +129,7 @@ def home(guild: discord.Guild, s: db.GuildSettings, note: str | None = None):
     on = sum(getattr(s, f) for f, _, _ in PROTECTIONS) + (s.risk_now() != "off")
     if s.teen_safety:
         teen = ui_kit.kv([
+            ("Teens", "Everyone without an 18+ role (Teen by Default)") if s.teen_default else
             ("Teen Roles", _roles(s, "young_roles", "older_roles")),
             ("Adult Roles", _roles(s, "adult_roles")),
             ("Protections", f"{on} of {len(PROTECTIONS) + 1} on · Warning Signs: {_risk_text(s).lower()}"),
@@ -172,9 +177,12 @@ def staff_page(guild, s: db.GuildSettings):
 
 def teen_page(guild, s: db.GuildSettings):
     on = sum(getattr(s, f) for f, _, _ in PROTECTIONS) + (s.risk_now() != "off")
-    ages = f"**Teen Roles:** {_roles(s, 'young_roles', 'older_roles')}\n**Adult Roles:** {_roles(s, 'adult_roles')}"
+    teens = ("Everyone without an 18+ role (Teen by Default)" if s.teen_default
+             else _roles(s, 'young_roles', 'older_roles'))
+    ages = f"**Teens:** {teens}\n**Adult Roles:** {_roles(s, 'adult_roles')}"
     if not s.teen_safety:
-        ages += "\n-# Teen safety stays off until you pick at least one teen role."
+        ages += ("\n-# Teen safety stays off until you pick your 18+ role." if s.teen_default else
+                 "\n-# Teen safety stays off until you pick at least one teen role.")
     mode = s.risk_now()
     risk = discord.ui.Section(
         f"**Warning Signs**\n-# Adds up inappropriate messages, contact info and teen reports over 30 days. "
@@ -302,8 +310,15 @@ def ages_page(guild, s: db.GuildSettings):
         ids = set().union(s.role_ids(field), *(s.role_ids(f) for f in also))
         return discord.ui.RoleSelect(custom_id=f"{PREFIX}:set:{field}", placeholder=placeholder,
                                      min_values=0, max_values=10, default_values=[discord.Object(r) for r in ids])
-    no_role = [("adult", "Count them as 18+ (safer)"), ("ignore", "Leave them out")]
-    return _card(guild, "Age Roles", "Who Lookout treats as a teen",
+    mode = ("How Ages Work", ["-# Teen by Default protects everyone who doesn't have an 18+ role.",
+                              _select("age_mode", AGE_MODES, "tbd" if s.teen_default else "roles", "How ages work")])
+    if s.teen_default:
+        return _card(guild, "Age Roles", "Who Lookout treats as a teen", mode,
+                     ("Adult Roles", [roles("adult_roles", "Pick the 18+ roles..."), f"-# {ADULT_TIP}"]),
+                     ("Wrong Age Roles", [_toggle(s, "age_check")]),
+                     buttons=[_button("Back", "page", "teen")])
+    no_role = [("adult", "Count them as 18+"), ("ignore", "Leave them out")]
+    return _card(guild, "Age Roles", "Who Lookout treats as a teen", mode,
                  None if s.teen_safety else _found_box(guild, "found"),
                  ("Teen Roles", ["-# Everyone under 18, like 13-15 and 16-17.",
                                  roles("young_roles", "Pick the teen roles...", "older_roles")]),
@@ -333,6 +348,10 @@ def extras_page(guild, s: db.GuildSettings):
     return _card(guild, "Extras", "Other protections and reports for the mods",
                  ("Images", [_toggle(s, "image_scan")]),
                  ("For Mods", [_toggle(s, "weekly_summary")]),
+                 ("Meerkat Emojis", [discord.ui.Section(
+                     "**Looky**\n-# Lookout's meerkat. Adds 12 emojis your members can use. "
+                     + "".join(ui_kit.ICONS.get(f"looky_{m}", "") for m in ("hi", "sus", "love", "watching")),
+                     accessory=_button("Add Emojis", "emojis"))]),
                  ("Your Data", f"**Cases and history:** kept {config.RETENTION_DAYS} days\n"
                                f"**Warning signs:** kept {db.SIGNAL_DAYS} days\n"
                                "-# Older records are deleted automatically. Everything is deleted if Lookout leaves "
@@ -384,12 +403,19 @@ async def safety_checkup(guild: discord.Guild, s: db.GuildSettings) -> list[tupl
     asked = None
     try:
         onboarding = await guild.onboarding()
-        ids = {r.id for r in age_roles}
+        # teen by default: the 18+ role shouldn't be something anyone can pick
+        ids = s.role_ids("adult_roles") if s.teen_default else {r.id for r in age_roles}
         asked = onboarding.enabled and any(ids & set(option.role_ids) for prompt in onboarding.prompts
                                            for option in prompt.options)
     except (discord.HTTPException, AttributeError):
         pass
-    if asked is None:
+    if s.teen_default:
+        ok = not asked
+        results.append(("Age Question", ok, "Your 18+ role isn't something anyone can pick in Onboarding." if ok else
+                        "Anyone can pick your 18+ role in Onboarding, teens too. Give it out in an age-restricted "
+                        "channel instead, so only adults Discord has verified can get it.\n"
+                        "-# **Server Settings** > **Onboarding**"))
+    elif asked is None:
         results.append(("Age Question", False, "Lookout couldn't read your Onboarding. Make sure new members get "
                                                "asked their age there, with options that give out your age roles.\n"
                                                "-# **Server Settings** > **Onboarding** · Needs Community turned on"))
@@ -401,6 +427,8 @@ async def safety_checkup(guild: discord.Guild, s: db.GuildSettings) -> list[tupl
 
     seen = [c for c in guild.channels if getattr(c, "nsfw", False)
             and any(c.permissions_for(r).view_channel for r in teen_roles)]
+    if s.teen_default:  # no teen roles to check, discord's own age check keeps teens out
+        seen = []
     results.append(("Age-Restricted Channels", not seen, "Teens can't see any of them." if not seen else
                     f"Teen roles can see {' '.join(c.mention for c in seen[:5])}. Take View Channel away from your "
                     "teen roles there.\n-# **Edit Channel** > **Permissions**"))
@@ -477,6 +505,29 @@ def step_ages(s: db.GuildSettings, guild=None, manual: bool = False):
                  "later in /setup.",
                  [roles("young_roles", "Pick the teen roles...", "older_roles"),
                   roles("adult_roles", "Pick the 18+ roles..."), _button("Next" if done else "Skip", "gnext")])
+
+
+def step_age_mode():
+    return ui_kit.card(
+        "Set Up Lookout",
+        ("Age Roles", ["How does your server mark ages?",
+                       discord.ui.Section("**Teen by Default** (safest)\n-# Pick only your 18+ role. Everyone without it "
+                                          "is protected as a teen, so nobody needs a role that shows they're under 18.",
+                                          accessory=_button("Use This", "gmode", "tbd")),
+                       discord.ui.Section("**Teen and Adult Roles**\n-# Pick both. Use this if your server already has "
+                                          "roles like 13-17 and 18+.", accessory=_button("Use These", "gmode", "roles"))]),
+        subtitle="Step 3 of 4", icon="settings")
+
+
+def step_adult(s: db.GuildSettings):
+    menu = discord.ui.RoleSelect(custom_id=f"{PREFIX}:gset:adult_roles", placeholder="Pick the 18+ role...",
+                                 min_values=0, max_values=10,
+                                 default_values=[discord.Object(r) for r in s.role_ids("adult_roles")])
+    return ui_kit.card("Set Up Lookout",
+                       ("Your 18+ Role", ["Pick the role only adults have. Everyone without it is protected as a teen.",
+                                          menu, f"-# {ADULT_TIP}"]),
+                       subtitle="Step 3 of 4 · Teen by Default", icon="settings",
+                       buttons=[_button("Back", "gmode", "back"), _button("Next" if s.teen_safety else "Skip", "gnext")])
 
 
 def step_panel(note: str | None = None):
@@ -560,13 +611,23 @@ class Setup(commands.Cog):
                     return await show(step_role(s, "Pick your actual mod role, not @everyone or a bot's role."))
                 s.staff_role_id = role.id
                 saved("mod role, in the setup steps")
+            if s.teen_safety:
+                return await show(step_adult(s) if s.teen_default else step_ages(s, guild, manual=True))
+            return await show(step_age_mode())
+        if action == "gmode":
+            if arg == "back":
+                return await show(step_age_mode())
+            self._set_mode(s, arg)
+            saved(f"age mode: {arg}, in the setup steps")
+            if arg == "tbd":
+                return await show(step_adult(s))
             if not s.teen_safety:
                 await find_age_roles(guild)
             return await show(step_ages(s, guild))
         if action == "gset":
             self._set_roles(s, arg, values)
             saved(f"{arg}, in the setup steps")
-            return await show(step_ages(s, guild, manual=True))
+            return await show(step_adult(s) if s.teen_default else step_ages(s, guild, manual=True))
         if action == "gmanual":
             return await show(step_ages(s, guild, manual=True))
         if action in ("gfound", "found"):  # "Use These" on the found age roles
@@ -592,6 +653,8 @@ class Setup(commands.Cog):
             if arg == "ages" and not s.teen_safety:
                 await find_age_roles(guild)
             return await show(PAGES.get(arg, home)(guild, s))
+        if action == "emojis":
+            return await self._add_emojis(interaction, guild)
         if action == "checkup":
             # reading onboarding is an api call, defer first
             await interaction.response.defer()
@@ -632,6 +695,8 @@ class Setup(commands.Cog):
             s.filter_languages = ",".join(v for v in values if v in wordlists.NAMES) or "en"
         elif arg == "no_age_role" and values:
             s.no_age_role = values[0]
+        elif arg == "age_mode" and values:
+            self._set_mode(s, values[0])
         elif arg == "post_panel":
             channel = guild.get_channel(int(values[0])) if values else None
             if not await self._post_panel(channel, can_post):
@@ -646,6 +711,17 @@ class Setup(commands.Cog):
             return await show(home(guild, s, note="That setting isn't in Lookout anymore. Here's the panel instead."))
         saved(arg)
         await show(PAGES[PAGE_OF.get(arg, "home")](guild, s))
+
+    # teen by default or teen and adult roles
+    @staticmethod
+    def _set_mode(s: db.GuildSettings, mode: str) -> None:
+        was_on = s.teen_safety
+        if mode == "tbd":
+            s.no_age_role = "teen"
+        elif s.teen_default:
+            s.no_age_role = "adult"
+        if s.teen_safety and not was_on and s.risk_mode == "test":
+            s.risk_test_until = time.time() + TEST_DAYS * 86400
 
     @staticmethod
     def _set_roles(s: db.GuildSettings, field: str, values: list[str]) -> None:
@@ -668,6 +744,42 @@ class Setup(commands.Cog):
             return True
         except discord.HTTPException:
             return False
+
+    # the meerkat pack as server emojis, skips the ones that are already there
+    @staticmethod
+    async def _add_emojis(interaction: discord.Interaction, guild: discord.Guild):
+        perms = guild.me.guild_permissions
+        if not (perms.create_expressions or perms.manage_expressions):
+            return await interaction.response.send_message(view=ui_kit.note(
+                "Lookout needs the **Create Expressions** permission for this. Turn it on in **Server Settings** > "
+                "**Roles** > **Lookout**, then press **Add Emojis** again."), ephemeral=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        have = {e.name for e in guild.emojis}
+        free = guild.emoji_limit - sum(not e.animated for e in guild.emojis)
+        added, left = [], 0
+        for path in sorted((config.ASSETS / "meerkat").glob("looky_*.png")):
+            if path.stem in have:
+                continue
+            if free <= 0:
+                left += 1
+                continue
+            try:
+                emoji = await guild.create_custom_emoji(name=path.stem, image=path.read_bytes(),
+                                                       reason=f"Lookout's meerkat emojis, added by {interaction.user}")
+            except discord.HTTPException:
+                left += 1
+                continue
+            added.append(str(emoji))
+            free -= 1
+        if added:
+            text = f"**Added {len(added)} meerkat emoji{'' if len(added) == 1 else 's'}.** {' '.join(added)}"
+        elif left:
+            text = "**The meerkats didn't fit.** Your server is out of emoji slots."
+        else:
+            text = "**The meerkats are already here.**"
+        if added and left:
+            text += f"\n-# {left} more didn't fit. Your server is out of emoji slots."
+        await interaction.followup.send(view=ui_kit.note(text), ephemeral=True)
 
     @staticmethod
     async def _post_panel(channel, can_post) -> bool:
