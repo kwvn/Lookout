@@ -512,7 +512,7 @@ class TeenSafety(commands.Cog):
         if add_app:
             buttons.append(add_app)
         view = ui_kit.card(
-            ui_kit.titled(ui_kit.mascot("hi", "brand"), "Before You Start Chatting"),
+            ui_kit.titled(ui_kit.mascot("wave", "brand"), "Before You Start Chatting"),
             f"You have a teen role in **{name}**, so here are a few things that help you stay safe there.",
             ("Control Who Can DM You", "Click the server's name, open **Privacy Settings** and turn off **Direct "
                                        "Messages**. People can still talk to you in the server, where the mods can "

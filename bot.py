@@ -185,7 +185,7 @@ class LookoutBot(commands.AutoShardedBot):
         files = []
         if channel.permissions_for(me).attach_files:
             files = [discord.File(io.BytesIO(await asyncio.to_thread(chart.welcome_banner)), filename="welcome.png")]
-        title = ui_kit.titled(ui_kit.mascot("hi"), "Thanks for Adding Lookout")
+        title = ui_kit.titled(ui_kit.mascot("wave"), "Thanks for Adding Lookout")
         view = ui_kit.boxes(title, "Setup takes about a minute.", [
             ("settings", "Get Started", "Press **Set Up** and pick your mod channel, mod role and age roles.\n"
                                         "-# Only admins can do this.",

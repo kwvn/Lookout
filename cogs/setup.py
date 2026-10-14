@@ -350,7 +350,7 @@ def extras_page(guild, s: db.GuildSettings):
                  ("For Mods", [_toggle(s, "weekly_summary")]),
                  ("Meerkat Emojis", [discord.ui.Section(
                      "**Looky**\n-# Lookout's meerkat. Adds 12 emojis your members can use. "
-                     + "".join(ui_kit.ICONS.get(f"looky_{m}", "") for m in ("hi", "sus", "love", "watching")),
+                     + "".join(ui_kit.ICONS.get(f"looky_{m}", "") for m in ("wave", "sus", "love", "watching")),
                      accessory=_button("Add Emojis", "emojis"))]),
                  ("Your Data", f"**Cases and history:** kept {config.RETENTION_DAYS} days\n"
                                f"**Warning signs:** kept {db.SIGNAL_DAYS} days\n"
