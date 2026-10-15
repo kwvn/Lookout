@@ -10,7 +10,7 @@ import db
 import ui_kit
 
 PREFIX = "lktrivia"
-IDLE = 30 * 60  # nobody pressed Next Question for this long, so wrap it up
+PAUSE = 10  # seconds each answer stays up before it moves on
 
 # question, right answer, wrong answers, why
 SAFETY = [
@@ -167,7 +167,7 @@ class Game:
         self.host = host
         self.number = 0           # question we're on, from 1
         self.open = False         # taking answers
-        self.waiting = False      # answer is up, waiting for Next Question
+        self.moves_on = 0         # when the answer makes way for the next question or the results
         self.ended = False
         self.wake = asyncio.Event()
         self.options: list[str] = []
@@ -233,24 +233,19 @@ def _end_button(game: Game) -> discord.ui.Button:
     return discord.ui.Button(label="End Game", custom_id=f"{PREFIX}:end:{game.id}")
 
 
-# buttons only while it's waiting on a mod
-def answer_view(game: Game, buttons: bool = False) -> discord.ui.LayoutView:
+# counts down to what's next, unless the game was ended early
+def answer_view(game: Game) -> discord.ui.LayoutView:
     text, answer, _, why = game.questions[game.number - 1]
     right = [user for user, pick in game.picks.items() if pick == game.right]
     if right:
         result = f"**{len(right)} of {len(game.picks)} got it:** {_names(right)}"
     else:
         result = "**Nobody got this one.**" if game.picks else "**Nobody answered.**"
-    rows = None
-    if buttons:
-        last = game.number == len(game.questions)
-        go = discord.ui.Button(label="Show Results" if last else "Next Question",
-                               custom_id=f"{PREFIX}:next:{game.id}:{game.number}")
-        rows = [go] if last else [go, _end_button(game)]
+    after = "Results" if game.number == len(game.questions) else "Next question"
     return ui_kit.card(ui_kit.titled(ui_kit.mascot("thumbsup" if right else "shock"), game.title),
                        (None, f"## {text}\n**Answer:** {answer}\n-# {why}"), result,
                        subtitle=f"Question {game.number} of {len(game.questions)}",
-                       footer="Waiting for a mod." if buttons else None, buttons=rows)
+                       footer=None if game.ended else f"{after} <t:{game.moves_on}:R>")
 
 
 def results_view(game: Game) -> discord.ui.LayoutView:
@@ -303,7 +298,8 @@ async def trivia_command(interaction: discord.Interaction, questions: app_comman
     cog.games[channel.id] = game
     await interaction.response.send_message(view=ui_kit.note(
         f"**Trivia started.** {_count(len(game.questions), 'question')}, {TIMES.get(seconds, f'{seconds} seconds')} "
-        "each.\n-# After each answer, press **Next Question** when you're ready.", buttons=[_end_button(game)]),
+        "each.\n-# It moves on by itself after each answer. Press **End Game** to stop early.",
+        buttons=[_end_button(game)]),
         ephemeral=True)
     try:
         await cog.play(game, channel)
@@ -349,15 +345,13 @@ class Trivia(commands.Cog):
                 game.points[user] = game.points.get(user, 0) + 1
             db.add_trivia_points(channel.guild.id, right)
             game.recap.append((game.questions[number - 1][0], answer, len(right), len(game.picks)))
-            game.waiting = not game.ended
+            game.moves_on = int(time.time()) + PAUSE
             try:
-                await message.edit(view=answer_view(game, buttons=game.waiting), allowed_mentions=quiet)
+                await message.edit(view=answer_view(game), allowed_mentions=quiet)
             except discord.HTTPException:
-                game.waiting, game.ended = False, True
-            if game.waiting:
-                if not await _wait(game, IDLE):
-                    game.ended = True
-                game.waiting = False
+                game.ended = True
+            if not game.ended:
+                await _wait(game, PAUSE)  # End Game cuts this short too
             if game.ended:
                 break
         try:
@@ -380,7 +374,7 @@ class Trivia(commands.Cog):
                                                            allowed_mentions=discord.AllowedMentions.none())
         game = self.games.get(interaction.channel_id)
         if parts[1] in ("next", "end"):
-            return await self._control(interaction, game, parts)
+            return await self._end(interaction, game, parts)
         try:
             game_id, number, pick = int(parts[1]), int(parts[2]), int(parts[3])
         except (ValueError, IndexError):
@@ -395,19 +389,14 @@ class Trivia(commands.Cog):
         await interaction.response.send_message(view=ui_kit.note(
             f"**Locked in:** {game.options[pick]}\n-# The answer shows <t:{game.ends}:R>."), ephemeral=True)
 
-    # Next Question / Show Results / End Game, for whoever started it or any mod
-    async def _control(self, interaction: discord.Interaction, game: Game | None, parts: list[str]):
-        if not game or parts[2:3] != [str(game.id)] or game.ended:
+    # End Game, for whoever started it or any mod. "next" is the old Next Question button, so it's always over
+    async def _end(self, interaction: discord.Interaction, game: Game | None, parts: list[str]):
+        if not game or parts[1] != "end" or parts[2:3] != [str(game.id)] or game.ended:
             return await interaction.response.send_message(view=ui_kit.note("That game's already over."),
                                                            ephemeral=True)
         if interaction.user.id != game.host and not interaction.permissions.manage_messages:
             return await interaction.response.send_message(view=ui_kit.note("Only mods can do that."), ephemeral=True)
-        if parts[1] == "end":
-            game.ended = True
-        elif not game.waiting or parts[3:] != [str(game.number)]:
-            return await interaction.response.send_message(view=ui_kit.note("Someone already pressed it."),
-                                                           ephemeral=True)
-        game.waiting = False
+        game.ended = True
         game.wake.set()
         if interaction.message and interaction.message.flags.ephemeral:
             await interaction.response.edit_message(view=ui_kit.note("**Game ended.**"))
