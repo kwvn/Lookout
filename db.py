@@ -83,6 +83,11 @@ _conn.executescript(
         guild_id INTEGER, user_id INTEGER, created_at REAL,
         PRIMARY KEY (guild_id, user_id)
     );
+    -- /trivia points, only the support server has /trivia
+    CREATE TABLE IF NOT EXISTS trivia_points (
+        guild_id INTEGER, user_id INTEGER, points INTEGER,
+        PRIMARY KEY (guild_id, user_id)
+    );
 
     -- removed features (age-aware voice, /trust, first-contact heads-up, selfie reply block)
     DROP TABLE IF EXISTS first_contacts;
@@ -229,7 +234,7 @@ def forget_guild(guild_id: int) -> None:
     for table in ("alert_actions", "reporters"):
         _conn.execute(f"DELETE FROM {table} WHERE message_id IN (SELECT message_id FROM alerts WHERE guild_id=?)",
                       (guild_id,))
-    for table in ("alerts", "appeals", "events", "guilds") + TEEN_TABLES:
+    for table in ("alerts", "appeals", "events", "guilds", "trivia_points") + TEEN_TABLES:
         _conn.execute(f"DELETE FROM {table} WHERE guild_id=?", (guild_id,))
     _conn.commit()
 
@@ -644,6 +649,8 @@ def set_verified_adult(guild_id: int, user_id: int, on: bool) -> None:
     else:
         _conn.execute("DELETE FROM verified_adults WHERE guild_id=? AND user_id=?", (guild_id, user_id))
     _conn.commit()
+
+
 SIGNAL_DAYS = 30        # how far back warning signs count
 
 
@@ -792,3 +799,26 @@ def claim_minutes() -> float | None:
     row = _conn.execute("SELECT AVG(claimed_at - created_at) FROM alerts WHERE claimed_at IS NOT NULL"
                         " AND claimed_at >= created_at").fetchone()
     return row[0] / 60 if row and row[0] is not None else None
+
+
+# trivia
+
+def add_trivia_points(guild_id: int, user_ids: list[int]) -> None:
+    _conn.executemany("INSERT INTO trivia_points VALUES (?, ?, 1) ON CONFLICT(guild_id, user_id) "
+                      "DO UPDATE SET points = points + 1", [(guild_id, u) for u in user_ids])
+    _conn.commit()
+
+
+def trivia_top(guild_id: int, limit: int = 10) -> list[tuple[int, int]]:
+    return _conn.execute("SELECT user_id, points FROM trivia_points WHERE guild_id=? ORDER BY points DESC LIMIT ?",
+                         (guild_id, limit)).fetchall()
+
+
+def trivia_rank(guild_id: int, user_id: int) -> tuple[int, int]:
+    row = _conn.execute("SELECT points FROM trivia_points WHERE guild_id=? AND user_id=?",
+                        (guild_id, user_id)).fetchone()
+    if not row:
+        return 0, 0
+    ahead = _conn.execute("SELECT COUNT(*) FROM trivia_points WHERE guild_id=? AND points>?",
+                          (guild_id, row[0])).fetchone()[0]
+    return ahead + 1, row[0]
