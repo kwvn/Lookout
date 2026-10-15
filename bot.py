@@ -66,11 +66,13 @@ class LookoutBot(commands.AutoShardedBot):
         synced = await self._sync("commands")
         self.command_ids = {cmd.name: cmd.id for cmd in synced}
         log.info("%d commands ready", len(synced))
-        if config.DEV_GUILD_ID:
-            # old versions synced to the test server, clear those so commands don't show up twice
+        if config.DEV_GUILD_ID and not db.get_meta(f"cleared:{config.DEV_GUILD_ID}"):
+            # old versions synced to the test server, clear those once so commands don't show up twice
             guild = discord.Object(config.DEV_GUILD_ID)
             self.tree.clear_commands(guild=guild)
             await self.tree.sync(guild=guild)
+            db.set_meta(f"cleared:{config.DEV_GUILD_ID}", "1")
+            db.set_meta(f"commands:{config.DEV_GUILD_ID}", "")  # if it's the support server, put /trivia etc back
         await self._add_owner_commands()
         self.purge_old_logs.start()
         self.rotate_status.start()
