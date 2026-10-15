@@ -42,6 +42,7 @@ TOGGLES = {name: (title, text) for name, title, text in PROTECTIONS} | {
 }
 PAGE_OF = {"filter_languages": "langs", "staff_channel": "staff", "staff_role": "staff", "reminder": "staff",
            "young_roles": "ages", "adult_roles": "ages", "no_age_role": "ages", "age_check": "ages", "age_mode": "ages",
+           "adult_button": "ages",
            "post_panel": "reports", "post_tips": "reports", "report_updates": "reports", "appeals": "reports",
            "image_scan": "extras", "weekly_summary": "extras"}
 VERIFICATION = {
@@ -132,6 +133,7 @@ def home(guild: discord.Guild, s: db.GuildSettings, note: str | None = None):
             ("Teens", "Everyone without an 18+ role (Teen by Default)") if s.teen_default else
             ("Teen Roles", _roles(s, "young_roles", "older_roles")),
             ("Adult Roles", _roles(s, "adult_roles")),
+            ("18+ Button", f"<#{s.adult_channel_id}>" if s.teen_default and s.adult_channel_id else None),
             ("Protections", f"{on} of {len(PROTECTIONS) + 1} on · Warning Signs: {_risk_text(s).lower()}"),
         ])
     else:
@@ -180,6 +182,8 @@ def teen_page(guild, s: db.GuildSettings):
     teens = ("Everyone without an 18+ role (Teen by Default)" if s.teen_default
              else _roles(s, 'young_roles', 'older_roles'))
     ages = f"**Teens:** {teens}\n**Adult Roles:** {_roles(s, 'adult_roles')}"
+    if s.teen_default and s.adult_channel_id:
+        ages += f"\n**18+ Button:** <#{s.adult_channel_id}>"
     if not s.teen_safety:
         ages += ("\n-# Teen safety stays off until you pick your 18+ role." if s.teen_default else
                  "\n-# Teen safety stays off until you pick at least one teen role.")
@@ -313,8 +317,16 @@ def ages_page(guild, s: db.GuildSettings):
     mode = ("How Ages Work", ["-# Teen by Default protects everyone who doesn't have an 18+ role.",
                               _select("age_mode", AGE_MODES, "tbd" if s.teen_default else "roles", "How ages work")])
     if s.teen_default:
+        where = (f"**Posted in:** <#{s.adult_channel_id}> · {len(db.verified_adults(s.guild_id))} adults so far"
+                 if s.adult_channel_id else "**Not posted yet**")
+        post = discord.ui.ChannelSelect(custom_id=f"{PREFIX}:set:adult_button",
+                                        channel_types=[discord.ChannelType.text],
+                                        placeholder="Post it in an age-restricted channel...")
         return _card(guild, "Age Roles", "Who Lookout treats as a teen", mode,
                      ("Adult Roles", [roles("adult_roles", "Pick the 18+ roles..."), f"-# {ADULT_TIP}"]),
+                     ("Invisible 18+", [where + "\n-# No role at all. Adults press a button in an age-restricted "
+                                                "channel, and Lookout remembers them privately. Nobody can see who "
+                                                "pressed it.", post]),
                      ("Wrong Age Roles", [_toggle(s, "age_check")]),
                      buttons=[_button("Back", "page", "teen")])
     no_role = [("adult", "Count them as 18+"), ("ignore", "Leave them out")]
@@ -508,15 +520,13 @@ def step_ages(s: db.GuildSettings, guild=None, manual: bool = False):
 
 
 def step_age_mode():
-    return ui_kit.card(
-        "Set Up Lookout",
-        ("Age Roles", ["How does your server mark ages?",
-                       discord.ui.Section("**Teen by Default** (safest)\n-# Pick only your 18+ role. Everyone without it "
-                                          "is protected as a teen, so nobody needs a role that shows they're under 18.",
-                                          accessory=_button("Use This", "gmode", "tbd")),
-                       discord.ui.Section("**Teen and Adult Roles**\n-# Pick both. Use this if your server already has "
-                                          "roles like 13-17 and 18+.", accessory=_button("Use These", "gmode", "roles"))]),
-        subtitle="Step 3 of 4", icon="settings")
+    tbd = discord.ui.Section("**Teen by Default** (safest)\n-# Pick only your 18+ role. Everyone without it is "
+                             "protected as a teen, so nobody needs a role that shows they're under 18.",
+                             accessory=_button("Use This", "gmode", "tbd"))
+    roles = discord.ui.Section("**Teen and Adult Roles**\n-# Pick both. Use this if your server already has roles "
+                               "like 13-17 and 18+.", accessory=_button("Use These", "gmode", "roles"))
+    return ui_kit.card("Set Up Lookout", ("Age Roles", ["How does your server mark ages?", tbd, roles]),
+                       subtitle="Step 3 of 4", icon="settings")
 
 
 def step_adult(s: db.GuildSettings):
@@ -525,9 +535,11 @@ def step_adult(s: db.GuildSettings):
                                  default_values=[discord.Object(r) for r in s.role_ids("adult_roles")])
     return ui_kit.card("Set Up Lookout",
                        ("Your 18+ Role", ["Pick the role only adults have. Everyone without it is protected as a teen.",
-                                          menu, f"-# {ADULT_TIP}"]),
+                                          menu, f"-# {ADULT_TIP}\n-# Don't want a role at all? Skip this, then post "
+                                                "the invisible 18+ button in **/setup** > **Age Roles**."]),
                        subtitle="Step 3 of 4 · Teen by Default", icon="settings",
-                       buttons=[_button("Back", "gmode", "back"), _button("Next" if s.teen_safety else "Skip", "gnext")])
+                       buttons=[_button("Back", "gmode", "back"),
+                                _button("Next" if s.teen_safety else "Skip", "gnext")])
 
 
 def step_panel(note: str | None = None):
@@ -697,6 +709,17 @@ class Setup(commands.Cog):
             s.no_age_role = values[0]
         elif arg == "age_mode" and values:
             self._set_mode(s, values[0])
+        elif arg == "adult_button":
+            channel = guild.get_channel(int(values[0])) if values else None
+            if channel is None or not channel.is_nsfw():
+                return await tell("That channel isn't age-restricted. Turn on **Age-Restricted Channel** in its "
+                                  "settings first, so only adults Discord has verified can see it.")
+            if not can_post(channel) or not await self._post_adult_button(channel):
+                return await tell("Lookout can't post in that channel. Pick a different one.")
+            was_on = s.teen_safety
+            s.adult_channel_id = channel.id
+            if s.teen_safety and not was_on and s.risk_mode == "test":
+                s.risk_test_until = time.time() + TEST_DAYS * 86400
         elif arg == "post_panel":
             channel = guild.get_channel(int(values[0])) if values else None
             if not await self._post_panel(channel, can_post):
@@ -741,6 +764,20 @@ class Setup(commands.Cog):
         try:
             view = tips_message(banner=channel.permissions_for(channel.guild.me).attach_files)
             await channel.send(view=view, files=ui_kit.files(view))
+            return True
+        except discord.HTTPException:
+            return False
+
+    @staticmethod
+    async def _post_adult_button(channel) -> bool:
+        view = ui_kit.card(ui_kit.titled("brand", "Are You 18+?"),
+                           "Press **I'm 18+** so Lookout knows you're an adult in this server.\n"
+                           "-# You don't get a role, and nobody can see who pressed it. Pressed it by mistake? "
+                           "Press **Undo**.",
+                           buttons=[discord.ui.Button(label="I'm 18+", custom_id="lkadult:yes"),
+                                    discord.ui.Button(label="Undo", custom_id="lkadult:no")])
+        try:
+            await channel.send(view=view)
             return True
         except discord.HTTPException:
             return False

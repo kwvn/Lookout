@@ -211,6 +211,7 @@ class TeenSafety(commands.Cog):
         # (guild, adult): (alert id, last message time, first message id, count)
         self._flirty_cases: dict[tuple[int, int], tuple[int, float, int, int]] = {}
         self._tasks: set[asyncio.Task] = set()
+        self._adults: dict[int, set[int]] = {}  # pressed the 18+ button, per server
         self.leave_check.start()
 
     def cog_unload(self):
@@ -223,8 +224,16 @@ class TeenSafety(commands.Cog):
 
     # roles
 
-    # TEEN or ADULT. no age role counts as TEEN with teen by default, otherwise ADULT unless the server ignores those
+    def verified(self, guild_id: int) -> set[int]:
+        if guild_id not in self._adults:
+            self._adults[guild_id] = db.verified_adults(guild_id)
+        return self._adults[guild_id]
+
+    # TEEN or ADULT. the 18+ button beats roles, discord checked their age.
+    # no age role counts as TEEN with teen by default, otherwise ADULT unless the server ignores those
     def band(self, member: discord.Member, s: db.GuildSettings, explicit: bool = False) -> int | None:
+        if member.id in self.verified(s.guild_id):
+            return ADULT
         ids = {r.id for r in getattr(member, "roles", [])}
         if ids & (s.role_ids("young_roles") | s.role_ids("older_roles")):
             return TEEN
@@ -636,6 +645,30 @@ class TeenSafety(commands.Cog):
             await msg.edit(view=view, allowed_mentions=discord.AllowedMentions.none())
         except (discord.HTTPException, StopIteration):
             log.info("Couldn't add a line to case %s", case["case_no"])
+
+    # the 18+ button. it only works in age-restricted channels, discord keeps everyone it hasn't verified out of those
+
+    @commands.Cog.listener("on_interaction")
+    async def adult_button(self, interaction: discord.Interaction):
+        if interaction.type != discord.InteractionType.component or interaction.guild is None:
+            return
+        cid = (interaction.data or {}).get("custom_id", "")
+        if cid not in ("lkadult:yes", "lkadult:no"):
+            return
+        if not getattr(interaction.channel, "is_nsfw", lambda: False)():
+            return await interaction.response.send_message(view=ui_kit.note(
+                "This button only works in an age-restricted channel."), ephemeral=True)
+        on = cid == "lkadult:yes"
+        guild, user = interaction.guild, interaction.user
+        db.set_verified_adult(guild.id, user.id, on)
+        (self.verified(guild.id).add if on else self.verified(guild.id).discard)(user.id)
+        await interaction.response.send_message(view=ui_kit.note(
+            "**Saved.** Lookout treats you as an adult in this server now. Nobody can see that you pressed this."
+            if on else "**Removed.** Lookout won't treat you as an adult here anymore."), ephemeral=True)
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild):
+        self._adults.pop(guild.id, None)  # the db rows go in forget_guild
 
     # age mismatch, once per member. lookout can't change roles so it's only ever a note for the mods
 

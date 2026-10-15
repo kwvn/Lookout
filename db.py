@@ -74,6 +74,11 @@ _conn.executescript(
         guild_id INTEGER, user_id INTEGER, created_at REAL,
         PRIMARY KEY (guild_id, user_id)
     );
+    -- pressed the 18+ button in an age-restricted channel. no role, nobody else can see it
+    CREATE TABLE IF NOT EXISTS verified_adults (
+        guild_id INTEGER, user_id INTEGER, created_at REAL,
+        PRIMARY KEY (guild_id, user_id)
+    );
 
     -- removed features (age-aware voice, /trust, first-contact heads-up, selfie reply block)
     DROP TABLE IF EXISTS first_contacts;
@@ -97,7 +102,7 @@ _GUILD_COLS = {"weekly_summary": "INTEGER DEFAULT 1", "summary_sent_at": "REAL",
                "selfie_guard": "INTEGER DEFAULT 1", "nick_check": "INTEGER DEFAULT 1",
                "alt_catcher": "INTEGER DEFAULT 1", "tips_channel_id": "INTEGER", "flirty_filter": "INTEGER DEFAULT 1",
                "checkup_score": "INTEGER", "checkup_at": "REAL", "filter_languages": "TEXT DEFAULT 'en'",
-               "age_check": "INTEGER DEFAULT 1"}
+               "age_check": "INTEGER DEFAULT 1", "adult_channel_id": "INTEGER"}
 _have = {r[1] for r in _conn.execute("PRAGMA table_info(guilds)")}
 for _col, _type in _GUILD_COLS.items():
     if _col not in _have:
@@ -154,6 +159,7 @@ class GuildSettings:
     checkup_at: float | None = None
     filter_languages: str = "en"         # the Message Filter's languages, like "en,es"
     age_check: bool = True               # age mismatch
+    adult_channel_id: int | None = None  # where the 18+ button was posted
 
     @property
     def configured(self) -> bool:
@@ -169,7 +175,8 @@ class GuildSettings:
 
     @property
     def teen_safety(self) -> bool:
-        return bool(self.young_roles or self.older_roles or (self.teen_default and self.adult_roles))
+        return bool(self.young_roles or self.older_roles
+                    or (self.teen_default and (self.adult_roles or self.adult_channel_id)))
 
     @property
     def languages(self) -> tuple[str, ...]:
@@ -185,7 +192,7 @@ _COLS = ("staff_channel_id", "staff_role_id", "image_scan", "weekly_summary", "r
          "appeals", "report_updates", "panel_channel_id", "young_roles", "older_roles", "adult_roles",
          "no_age_role", "contact_filter", "teen_restrict", "risk_mode", "risk_test_until", "tips_dm",
          "selfie_guard", "nick_check", "alt_catcher", "tips_channel_id", "flirty_filter", "checkup_score",
-         "checkup_at", "filter_languages", "age_check")
+         "checkup_at", "filter_languages", "age_check", "adult_channel_id")
 _BOOLS = ("image_scan", "weekly_summary", "appeals", "report_updates", "contact_filter", "teen_restrict",
           "tips_dm", "selfie_guard", "nick_check", "alt_catcher", "flirty_filter", "age_check")
 
@@ -609,7 +616,20 @@ def delete_event(guild_id: int, event_id: int) -> tuple | None:
 
 # teen safety
 
-TEEN_TABLES = ("teen_signals", "restrictions", "risk_flags", "nudged", "nick_tips", "leavers", "alt_alerts")
+TEEN_TABLES = ("teen_signals", "restrictions", "risk_flags", "nudged", "nick_tips", "leavers", "alt_alerts",
+               "verified_adults")
+
+
+def verified_adults(guild_id: int) -> set[int]:
+    return {r[0] for r in _conn.execute("SELECT user_id FROM verified_adults WHERE guild_id=?", (guild_id,))}
+
+
+def set_verified_adult(guild_id: int, user_id: int, on: bool) -> None:
+    if on:
+        _conn.execute("INSERT OR IGNORE INTO verified_adults VALUES (?, ?, ?)", (guild_id, user_id, time.time()))
+    else:
+        _conn.execute("DELETE FROM verified_adults WHERE guild_id=? AND user_id=?", (guild_id, user_id))
+    _conn.commit()
 SIGNAL_DAYS = 30        # how far back warning signs count
 
 
