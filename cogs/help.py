@@ -26,7 +26,8 @@ TIPS = [
 
 def tips_message(banner: bool = True) -> discord.ui.LayoutView:
     view = discord.ui.LayoutView(timeout=None)
-    ui_kit.head(view, "Safety Tips", "Short tips for staying safe on Discord.", "warning", banner=banner)
+    ui_kit.head(view, "Safety Tips", ui_kit.titled(ui_kit.mascot("wave"), "Short tips for staying safe on Discord."),
+                "warning", banner=banner)
     link = discord.ButtonStyle.link
     add_app = ui_kit.add_app_button()
     buttons = {
@@ -87,19 +88,20 @@ class Help(commands.Cog):
         s = db.get_settings(interaction.guild.id)
 
         add_app = ui_kit.add_app_button()
-        items = [("report", "Report a Problem", f"{c('report')} lets the mods know something's wrong. Only they can "
-                                                "see it.\n-# You can also right-click someone or a message, then "
-                                                "**Apps**." + ("\n-# Got a DM that's not okay? Add Lookout to your "
-                                                               "apps, then right-click it > **Apps** > **Report "
-                                                               "Message to Mods**." if add_app else ""),
+        looky = ui_kit.mascot
+        items = [("report", ui_kit.titled(looky("noted"), "Report a Problem"),
+                  f"{c('report')} lets the mods know something's wrong. Only they can see it.\n-# You can also "
+                  "right-click someone or a message, then **Apps**."
+                  + ("\n-# Got a DM that's not okay? Add Lookout to your apps, then right-click it > **Apps** > "
+                     "**Report Message to Mods**." if add_app else ""),
                   [add_app] if add_app else None)]
         if s.teen_safety:
-            items.append(("brand", ui_kit.titled(ui_kit.mascot("watching"), "Teen Safety Is On"),
+            items.append(("brand", ui_kit.titled(looky("watching"), "Teen Safety Is On"),
                           "Inappropriate messages and contact info that adults send to teens get removed, and the "
                           "mods are told.\n-# Lookout never reads your DMs or listens to voice. It only sees a DM "
                           "you report yourself.", None))
         if isinstance(user, discord.Member) and self.bot.is_staff(user):
-            items.append(("staff", "For Mods", "\n".join([
+            items.append(("staff", ui_kit.titled(looky("mod"), "For Mods"), "\n".join([
                 f"{c('cases')} Browse open and past alerts",
                 f"{c('history')} See a member's warnings, reports and flags",
                 f"{c('warn')} Warn a member. They get a DM.",
@@ -110,7 +112,7 @@ class Help(commands.Cog):
                                                     f"for your server\n-# In {c('summary')}, admins also get Mod "
                                                     "Stats. A weekly summary goes to the mod channel every Monday.",
                           None))
-        items.append(("warning", "Safety Tips", "Tips for staying safe on Discord.",
+        items.append(("warning", ui_kit.titled(looky("love"), "Safety Tips"), "Tips for staying safe on Discord.",
                       [discord.ui.Button(label="Safety Tips", custom_id="lkhelp:tips"),
                        discord.ui.Button(label="See a Demo", custom_id="lkhelp:demo")]))
         view = ui_kit.boxes("Help", "What Lookout does in this server", items, icon="help")

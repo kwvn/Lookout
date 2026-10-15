@@ -658,7 +658,7 @@ class Setup(commands.Cog):
                                                  "this step."))
                 s.panel_channel_id = channel.id
                 saved("report button, in the setup steps")
-            return await show(home(guild, s, note=FIRST_DONE))
+            return await show(home(guild, s, note=ui_kit.titled(ui_kit.mascot("party"), FIRST_DONE)))
 
         # panel
         if action == "page":

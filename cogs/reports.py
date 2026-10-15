@@ -80,7 +80,8 @@ def panel_view(banner: bool = True) -> discord.ui.LayoutView:
     button = discord.ui.Button(label="Report a Problem", custom_id=f"{PANEL}:open")
     if banner and chart.banner("report", "Report a Problem"):
         ui_kit.head(view, "Report a Problem", None, "report")
-        text = "**Something wrong?**\nTell the mods privately. Only they see your report, and nobody else knows you sent it."
+        text = ui_kit.titled(ui_kit.mascot("noted"), "**Something wrong?**\nTell the mods privately. Only they see "
+                                                     "your report, and nobody else knows you sent it.")
     else:
         text = (f"## {ui_kit.titled('report', 'Report a Problem')}\nSomething wrong? Tell the mods privately. Only they "
                 "see your report.")

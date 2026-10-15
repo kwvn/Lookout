@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import io
+import json
 import logging
 import math
 import re
@@ -62,9 +63,9 @@ class LookoutBot(commands.AutoShardedBot):
                 # one broken cog shouldn't take the whole bot down
                 log.error("Feature %s is OFF: %s", ext, e.__cause__ or e)
         self._format_commands()
-        synced = await self.tree.sync()
+        synced = await self._sync("commands")
         self.command_ids = {cmd.name: cmd.id for cmd in synced}
-        log.info("Synced %d commands", len(synced))
+        log.info("%d commands ready", len(synced))
         if config.DEV_GUILD_ID:
             # old versions synced to the test server, clear those so commands don't show up twice
             guild = discord.Object(config.DEV_GUILD_ID)
@@ -95,9 +96,19 @@ class LookoutBot(commands.AutoShardedBot):
         for cmd in commands_:
             self.tree.add_command(cmd, guild=guild, override=True)
         try:
-            await self.tree.sync(guild=guild)
+            await self._sync(f"commands:{guild_id}", guild=guild)
         except discord.HTTPException as e:
             log.info("Couldn't add /totals and /post-demo to the support server: %s", e)
+
+    # syncing on every restart is slow and gets rate limited after a few restarts, so only when something changed
+    async def _sync(self, key: str, guild: discord.abc.Snowflake | None = None) -> list:
+        payload = [cmd.to_dict(self.tree) for cmd in self.tree.get_commands(guild=guild)]
+        code = hashlib.md5(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
+        if db.get_meta(key) == code:
+            return await self.tree.fetch_commands(guild=guild)
+        synced = await self.tree.sync(guild=guild)
+        db.set_meta(key, code)
+        return synced
 
     async def close(self):
         self.heartbeat.cancel()

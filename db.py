@@ -74,6 +74,10 @@ _conn.executescript(
         guild_id INTEGER, user_id INTEGER, created_at REAL,
         PRIMARY KEY (guild_id, user_id)
     );
+    -- small things to remember between restarts, like a hash of the last synced commands
+    CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY, value TEXT
+    );
     -- pressed the 18+ button in an age-restricted channel. no role, nobody else can see it
     CREATE TABLE IF NOT EXISTS verified_adults (
         guild_id INTEGER, user_id INTEGER, created_at REAL,
@@ -618,6 +622,16 @@ def delete_event(guild_id: int, event_id: int) -> tuple | None:
 
 TEEN_TABLES = ("teen_signals", "restrictions", "risk_flags", "nudged", "nick_tips", "leavers", "alt_alerts",
                "verified_adults")
+
+
+def get_meta(key: str) -> str | None:
+    row = _conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def set_meta(key: str, value: str) -> None:
+    _conn.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (key, value))
+    _conn.commit()
 
 
 def verified_adults(guild_id: int) -> set[int]:

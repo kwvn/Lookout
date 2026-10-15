@@ -12,6 +12,8 @@ import ui_kit
 
 PREFIX = "lkdemo"
 PAGES = 8
+# which looky each page gets
+MOODS = {1: "noted", 2: "mod", 3: "watching", 4: "love", 5: "mod", 6: "noted", 7: "party", 8: "wave"}
 CLAIMED, WARNED, TIMED_OUT, DISCONNECTED, RESOLVED = 1, 2, 4, 8, 16  # bit flags for the example alert
 
 WEEK = dict(reports=47, images=12, warnings=18, timeouts=9, disconnects=6, opened=31, resolved=28, avg_seconds=14 * 60, still_open=3, daily=[4, 6, 3, 8, 11, 9, 6],
@@ -40,7 +42,7 @@ def _step(page: int) -> str:
 
 def _card(page: int, name: str, *sections, subtitle: str | None = None, **kwargs):
     sub = f"**{name}** · {_step(page)}" + (f" · {subtitle}" if subtitle else "")
-    sub = ui_kit.titled(ui_kit.mascot("watching"), sub)
+    sub = ui_kit.titled(ui_kit.mascot(MOODS.get(page, "watching")), sub)
     return ui_kit.card("Demo", *sections, subtitle=sub, icon="brand", **kwargs)
 
 
