@@ -1,4 +1,6 @@
 import asyncio
+import json
+import logging
 import random
 import time
 
@@ -9,6 +11,7 @@ from discord.ext import commands
 import db
 import ui_kit
 
+log = logging.getLogger("lookout.trivia")
 PREFIX = "lktrivia"
 PAUSE = 10  # seconds each answer stays up before it moves on
 LEAD_IN = 30  # head start after a ping so people can get here
@@ -188,6 +191,23 @@ async def _delete(message: discord.Message | None) -> None:
             pass
 
 
+# the question that's up in each channel, so a restart can't leave one stuck
+def _live() -> dict[str, int]:
+    try:
+        return json.loads(db.get_meta("trivia_live") or "{}")
+    except ValueError:
+        return {}
+
+
+def _set_live(channel_id: int, message_id: int | None = None) -> None:
+    live = _live()
+    if message_id:
+        live[str(channel_id)] = message_id
+    else:
+        live.pop(str(channel_id), None)
+    db.set_meta("trivia_live", json.dumps(live))
+
+
 # sleeps, but a button press cuts it short. True if one did
 async def _wait(game: Game, seconds: float) -> bool:
     try:
@@ -273,6 +293,13 @@ def results_view(game: Game) -> discord.ui.LayoutView:
                       for n, (question, answer, got, answered) in enumerate(game.recap, 1))
     return ui_kit.card(ui_kit.titled(ui_kit.mascot("party"), "Trivia Results"), ("Top Players", text),
                        ("Answers", recap) if recap else None, subtitle=f"{played} · {_count(players, 'player')}",
+                       buttons=[discord.ui.Button(label="Leaderboard", custom_id=f"{PREFIX}:top")])
+
+
+# what a stuck question turns into after a restart
+def stopped_view() -> discord.ui.LayoutView:
+    return ui_kit.note("**This game stopped early.** Lookout restarted in the middle of it.\n"
+                       "-# Points from the questions before still count.",
                        buttons=[discord.ui.Button(label="Leaderboard", custom_id=f"{PREFIX}:top")])
 
 
@@ -364,42 +391,64 @@ class Trivia(commands.Cog):
                     pass
                 return
         message = None
-        for number, (_, answer, wrong, _) in enumerate(game.questions, 1):
-            game.number = number
-            game.options = [answer, *wrong]
-            random.shuffle(game.options)
-            game.right = game.options.index(answer)
-            game.picks = {}
-            game.ends = int(time.time()) + game.seconds
-            try:
-                new = await channel.send(view=question_view(game), allowed_mentions=quiet)
-            except discord.HTTPException:
-                return await _delete(message)
-            await _delete(message)  # only one question in chat at a time
-            message = new
-            game.open = True
-            await _wait(game, game.seconds)  # End Game cuts it short
-            game.open = False
+        try:
+            for number, (_, answer, wrong, _) in enumerate(game.questions, 1):
+                game.number = number
+                game.options = [answer, *wrong]
+                random.shuffle(game.options)
+                game.right = game.options.index(answer)
+                game.picks = {}
+                game.ends = int(time.time()) + game.seconds
+                try:
+                    new = await channel.send(view=question_view(game), allowed_mentions=quiet)
+                except discord.HTTPException:
+                    await _delete(message)
+                    return _set_live(channel.id)
+                await _delete(message)  # only one question in chat at a time
+                message = new
+                _set_live(channel.id, message.id)
+                game.open = True
+                await _wait(game, game.seconds)  # End Game cuts it short
+                game.open = False
 
-            right = [user for user, pick in game.picks.items() if pick == game.right]
-            for user in right:
-                game.points[user] = game.points.get(user, 0) + 1
-            db.add_trivia_points(channel.guild.id, right)
-            game.recap.append((game.questions[number - 1][0], answer, len(right), len(game.picks)))
-            game.moves_on = int(time.time()) + PAUSE
-            try:
-                await message.edit(view=answer_view(game), allowed_mentions=quiet)
-            except discord.HTTPException:
-                game.ended = True
-            if not game.ended:
-                await _wait(game, PAUSE)  # End Game cuts this short too
-            if game.ended:
-                break
+                right = [user for user, pick in game.picks.items() if pick == game.right]
+                for user in right:
+                    game.points[user] = game.points.get(user, 0) + 1
+                db.add_trivia_points(channel.guild.id, right)
+                game.recap.append((game.questions[number - 1][0], answer, len(right), len(game.picks)))
+                game.moves_on = int(time.time()) + PAUSE
+                try:
+                    await message.edit(view=answer_view(game), allowed_mentions=quiet)
+                except discord.HTTPException:
+                    game.ended = True
+                if not game.ended:
+                    await _wait(game, PAUSE)  # End Game cuts this short too
+                if game.ended:
+                    break
+        except Exception:  # lost connection or something broke, still show what got played
+            log.warning("Trivia in %s stopped early", channel.id, exc_info=True)
+            game.ended = True
         try:
             await channel.send(view=results_view(game), allowed_mentions=quiet)
         except discord.HTTPException:
             pass
+        except Exception:  # still offline, on_ready fixes the card once we're back
+            return log.warning("Couldn't post the trivia results in %s", channel.id, exc_info=True)
         await _delete(message)
+        _set_live(channel.id)
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        for channel_id, message_id in _live().items():
+            if int(channel_id) in self.games:
+                continue
+            channel = self.bot.get_channel(int(channel_id))
+            if channel:
+                try:
+                    await channel.get_partial_message(message_id).edit(view=stopped_view())
+                except discord.HTTPException:
+                    pass
+            _set_live(int(channel_id))
 
     @commands.Cog.listener()
     async def on_interaction(self, interaction: discord.Interaction):
@@ -420,7 +469,11 @@ class Trivia(commands.Cog):
             game_id, number, pick = int(parts[1]), int(parts[2]), int(parts[3])
         except (ValueError, IndexError):
             return
-        if not game or game.id != game_id or game.number != number or not game.open or pick >= len(game.options):
+        if not game or game.id != game_id:  # left over from a restart
+            if not game:
+                _set_live(interaction.channel_id)
+            return await interaction.response.edit_message(view=stopped_view())
+        if game.number != number or not game.open or pick >= len(game.options):
             return await interaction.response.send_message(view=ui_kit.note("This question's over."), ephemeral=True)
         if user.id in game.picks:
             return await interaction.response.send_message(view=ui_kit.note(
