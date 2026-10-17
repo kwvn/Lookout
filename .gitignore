@@ -3,3 +3,6 @@ lookout.db
 wordlists.py
 __pycache__/
 venv/
+lookout.db-journal
+.vscode/
+.idea/

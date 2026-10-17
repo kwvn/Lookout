@@ -18,7 +18,6 @@ def _float(name, default):
 
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
-DEV_GUILD_ID = _int("DEV_GUILD_ID", None)  # legacy, only used for cleanup
 
 # view channels, send messages, manage messages, attach files, read message history,
 # move members, moderate members, manage nicknames

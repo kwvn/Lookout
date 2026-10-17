@@ -11,7 +11,7 @@ import ui_kit
 
 PREFIX = "lktrivia"
 PAUSE = 10  # seconds each answer stays up before it moves on
-LEAD_IN = 30  # seconds before the first question when a role gets pinged, so people have time to show up
+LEAD_IN = 30  # head start after a ping so people can get here
 
 # question, right answer, wrong answers, why
 SAFETY = [
@@ -222,7 +222,7 @@ def _names(ids: list[int], limit: int = 10) -> str:
     return names + (f" and {len(ids) - limit} more" if len(ids) > limit else "")
 
 
-# the ping, a little before the first question
+# goes out with the ping
 def start_view(game: Game, role: discord.Role, starts: int) -> discord.ui.LayoutView:
     each = TIMES.get(game.seconds, f"{game.seconds} seconds")
     return ui_kit.card(ui_kit.titled(ui_kit.mascot("think"), game.title),
@@ -357,7 +357,7 @@ class Trivia(commands.Cog):
             except discord.HTTPException:
                 return
             await _wait(game, LEAD_IN)  # End Game cuts it short
-            if game.ended:  # called off before the first question, so there's nothing to show results for
+            if game.ended:  # nobody's played yet, no results to show
                 try:
                     await start.edit(view=ui_kit.note("**This game was called off.**"), allowed_mentions=quiet)
                 except discord.HTTPException:
