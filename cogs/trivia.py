@@ -298,6 +298,13 @@ async def trivia_command(interaction: discord.Interaction, questions: app_comman
         return await interaction.response.send_message(view=ui_kit.note("Only mods can start trivia."), ephemeral=True)
     cog = interaction.client.get_cog("Trivia")
     channel = interaction.channel
+    trivia_channel = db.get_settings(interaction.guild.id).trivia_channel_id
+    if channel.id != trivia_channel:
+        cid = interaction.client.command_ids.get("setup")
+        setup_cmd = f"</setup:{cid}>" if cid else "/setup"
+        return await interaction.response.send_message(view=ui_kit.note(
+            f"Trivia only runs in <#{trivia_channel}>." if trivia_channel else
+            f"Trivia needs a channel first. An admin can pick one in {setup_cmd} > **Extras**."), ephemeral=True)
     if channel.id in cog.games:
         return await interaction.response.send_message(view=ui_kit.note(
             "There's already a game going in here.", buttons=[_end_button(cog.games[channel.id])]), ephemeral=True)
@@ -329,8 +336,8 @@ async def trivia_command(interaction: discord.Interaction, questions: app_comman
         cog.games.pop(channel.id, None)
 
 
-# only synced to the support server (bot.py)
-COMMAND = app_commands.Command(name="trivia", description="Start a safety trivia game in this channel",
+# added to every server in setup() below
+COMMAND = app_commands.Command(name="trivia", description="Start a safety trivia game in the trivia channel",
                                callback=trivia_command)
 COMMAND.default_permissions = discord.Permissions(moderate_members=True)  # same as the other mod commands
 COMMAND.guild_only = True
@@ -340,7 +347,6 @@ class Trivia(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.games: dict[int, Game] = {}  # channel id -> game
-        self.owner_command = COMMAND
 
     async def play(self, game: Game, channel, ping: discord.Role | None = None) -> None:
         quiet = discord.AllowedMentions.none()
@@ -442,3 +448,4 @@ class Trivia(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Trivia(bot))
+    bot.tree.add_command(COMMAND, override=True)

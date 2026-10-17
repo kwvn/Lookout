@@ -72,7 +72,7 @@ class LookoutBot(commands.AutoShardedBot):
             self.tree.clear_commands(guild=guild)
             await self.tree.sync(guild=guild)
             db.set_meta(f"cleared:{config.DEV_GUILD_ID}", "1")
-            db.set_meta(f"commands:{config.DEV_GUILD_ID}", "")  # if it's the support server, put /trivia etc back
+            db.set_meta(f"commands:{config.DEV_GUILD_ID}", "")  # if it's the support server, put /totals etc back
         await self._add_owner_commands()
         self.purge_old_logs.start()
         self.rotate_status.start()
@@ -93,14 +93,14 @@ class LookoutBot(commands.AutoShardedBot):
             except discord.HTTPException:
                 guild_id = 0
         if not guild_id:
-            return log.info("Couldn't find the support server, so /totals, /post-demo and /trivia are off")
+            return log.info("Couldn't find the support server, so /totals and /post-demo are off")
         guild = discord.Object(guild_id)
         for cmd in commands_:
             self.tree.add_command(cmd, guild=guild, override=True)
         try:
             await self._sync(f"commands:{guild_id}", guild=guild)
         except discord.HTTPException as e:
-            log.info("Couldn't add /totals, /post-demo and /trivia to the support server: %s", e)
+            log.info("Couldn't add /totals and /post-demo to the support server: %s", e)
 
     # syncing on every restart is slow and gets rate limited after a few restarts, so only when something changed
     async def _sync(self, key: str, guild: discord.abc.Snowflake | None = None) -> list:

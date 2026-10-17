@@ -106,6 +106,7 @@ class Help(commands.Cog):
                 f"{c('history')} See a member's warnings, reports and flags",
                 f"{c('warn')} Warn a member. They get a DM.",
                 f"{c('summary')} The last 7 days in numbers and charts",
+                f"{c('trivia')} Host a safety trivia game in the trivia channel",
             ]), None))
         if isinstance(user, discord.Member) and user.guild_permissions.manage_guild:
             items.append(("settings", "For Admins", f"{c('setup')} Every setting in one place, plus a Safety Checkup "

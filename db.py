@@ -83,7 +83,7 @@ _conn.executescript(
         guild_id INTEGER, user_id INTEGER, created_at REAL,
         PRIMARY KEY (guild_id, user_id)
     );
-    -- /trivia points, only the support server has /trivia
+    -- /trivia points, per server
     CREATE TABLE IF NOT EXISTS trivia_points (
         guild_id INTEGER, user_id INTEGER, points INTEGER,
         PRIMARY KEY (guild_id, user_id)
@@ -111,7 +111,7 @@ _GUILD_COLS = {"weekly_summary": "INTEGER DEFAULT 1", "summary_sent_at": "REAL",
                "selfie_guard": "INTEGER DEFAULT 1", "nick_check": "INTEGER DEFAULT 1",
                "alt_catcher": "INTEGER DEFAULT 1", "tips_channel_id": "INTEGER", "flirty_filter": "INTEGER DEFAULT 1",
                "checkup_score": "INTEGER", "checkup_at": "REAL", "filter_languages": "TEXT DEFAULT 'en'",
-               "age_check": "INTEGER DEFAULT 1", "adult_channel_id": "INTEGER"}
+               "age_check": "INTEGER DEFAULT 1", "adult_channel_id": "INTEGER", "trivia_channel_id": "INTEGER"}
 _have = {r[1] for r in _conn.execute("PRAGMA table_info(guilds)")}
 for _col, _type in _GUILD_COLS.items():
     if _col not in _have:
@@ -169,6 +169,7 @@ class GuildSettings:
     filter_languages: str = "en"         # the Message Filter's languages, like "en,es"
     age_check: bool = True               # age mismatch
     adult_channel_id: int | None = None  # where the 18+ button was posted
+    trivia_channel_id: int | None = None  # the only channel /trivia runs in
 
     @property
     def configured(self) -> bool:
@@ -201,7 +202,7 @@ _COLS = ("staff_channel_id", "staff_role_id", "image_scan", "weekly_summary", "r
          "appeals", "report_updates", "panel_channel_id", "young_roles", "older_roles", "adult_roles",
          "no_age_role", "contact_filter", "teen_restrict", "risk_mode", "risk_test_until", "tips_dm",
          "selfie_guard", "nick_check", "alt_catcher", "tips_channel_id", "flirty_filter", "checkup_score",
-         "checkup_at", "filter_languages", "age_check", "adult_channel_id")
+         "checkup_at", "filter_languages", "age_check", "adult_channel_id", "trivia_channel_id")
 _BOOLS = ("image_scan", "weekly_summary", "appeals", "report_updates", "contact_filter", "teen_restrict",
           "tips_dm", "selfie_guard", "nick_check", "alt_catcher", "flirty_filter", "age_check")
 

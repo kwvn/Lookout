@@ -45,7 +45,7 @@ PAGE_OF = {"filter_languages": "langs", "staff_channel": "staff", "staff_role": 
            "young_roles": "ages", "adult_roles": "ages", "no_age_role": "ages", "age_check": "ages", "age_mode": "ages",
            "adult_button": "ages",
            "post_panel": "reports", "post_tips": "reports", "report_updates": "reports", "appeals": "reports",
-           "image_scan": "extras", "weekly_summary": "extras"}
+           "image_scan": "extras", "weekly_summary": "extras", "trivia_channel": "extras"}
 VERIFICATION = {
     discord.VerificationLevel.none: "None. Anyone can chat right away.",
     discord.VerificationLevel.low: "Low. Members only need a verified email.",
@@ -358,9 +358,15 @@ def reports_page(guild, s: db.GuildSettings):
 
 
 def extras_page(guild, s: db.GuildSettings):
+    trivia_where = f"**Channel:** <#{s.trivia_channel_id}>" if s.trivia_channel_id else "**Not set**"
+    trivia = discord.ui.ChannelSelect(custom_id=f"{PREFIX}:set:trivia_channel", channel_types=[discord.ChannelType.text],
+                                      placeholder="Pick your general chat...",
+                                      default_values=[discord.Object(s.trivia_channel_id)] if s.trivia_channel_id else [])
     return _card(guild, "Extras", "Other protections and reports for the mods",
                  ("Images", [_toggle(s, "image_scan")]),
                  ("For Mods", [_toggle(s, "weekly_summary")]),
+                 ("Trivia", [trivia_where + "\n-# Mods can host safety trivia games with /trivia, only in this channel.",
+                             trivia]),
                  ("Meerkat Emojis", [discord.ui.Section(
                      f"**Looky**\n-# Lookout's meerkat. Adds {MEERKATS} emojis your members can use. "
                      + "".join(ui_kit.ICONS.get(f"looky_{m}", "") for m in ("wave", "sus", "love", "watching")),
@@ -731,6 +737,11 @@ class Setup(commands.Cog):
             if not can_post(channel) or not await self._post_tips(channel):
                 return await tell("Lookout can't post in that channel. Pick a different one.")
             s.tips_channel_id = channel.id
+        elif arg == "trivia_channel":
+            channel = guild.get_channel(int(values[0])) if values else None
+            if not can_post(channel):
+                return await tell("Lookout can't post in that channel. Give it View Channel and Send Messages there.")
+            s.trivia_channel_id = channel.id
         else:  # old menu (night hours etc)
             return await show(home(guild, s, note="That setting isn't in Lookout anymore. Here's the panel instead."))
         saved(arg)

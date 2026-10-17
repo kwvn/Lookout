@@ -38,7 +38,7 @@ HEARTBEAT_URL = os.getenv("HEARTBEAT_URL", "").strip()
 TOPGG_TOKEN = os.getenv("TOPGG_TOKEN", "").strip()
 
 SUPPORT_URL = "https://discord.gg/BKedYyHgn9"
-# where /totals, /post-demo and /trivia get synced, looked up from SUPPORT_URL if empty
+# where /totals and /post-demo get synced, looked up from SUPPORT_URL if empty
 SUPPORT_GUILD_ID = _int("SUPPORT_GUILD_ID", 0)
 
 DB_PATH = BASE_DIR / "lookout.db"
