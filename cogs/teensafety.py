@@ -31,6 +31,8 @@ FLIRTY_CASE_EVERY = 600  # messages within this go on the same case
 MAX_CASE_NOTES = 5  # copy this many, then just count
 RISK_THRESHOLD = 8
 ALT_DAYS = 30  # alt check window
+NEARBY_SECONDS = 120  # an adult's message this soon after a teen's counts as talking to them
+NEARBY_MESSAGES = 5
 
 # nickname info. cities only count next to an age or school, never as the first word (Austin, Dallas...)
 # "mia 14" and "14yo" are ages, "Sniper13" isn't
@@ -42,6 +44,13 @@ CITY_IN_NAME = re.compile(
     r"austin|jacksonville|columbus|charlotte|indianapolis|seattle|denver|boston|detroit|nashville|portland|"
     r"las vegas|memphis|baltimore|milwaukee|atlanta|miami|orlando|tampa|london|manchester|birmingham|"
     r"liverpool|glasgow|leeds|toronto|vancouver|montreal|calgary|sydney|melbourne|brisbane|perth)\b", re.I)
+
+
+# birth years of 13 to 17 year olds, "mia 2011" or "jake '10". worked out each time so it moves with the year
+def birth_year_in_name() -> re.Pattern:
+    year = time.localtime().tm_year
+    years = "|".join(str(y)[2:] for y in range(year - 18, year - 12))
+    return re.compile(rf"(?<![\w])(?:20(?:{years})|'(?:{years}))(?![\w])")
 
 # what someone says about their own age: "im 14", "i'm 15 btw", "im a 16 year old", "age: 17".
 # only if nothing that sounds like a unit comes next, so "im 15 minutes away" and "im 14 kills in" don't count
@@ -64,15 +73,28 @@ WEIGHTS = {
 }
 
 
+NUMBER_WORDS = {"zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6",
+                "seven": "7", "eight": "8", "nine": "9"}
+_NUMBER_WORD = re.compile(rf"\b(?:{'|'.join(NUMBER_WORDS)})\b", re.I)
+
+
+def _counting(digits: str) -> bool:
+    return digits in "01234567890123456789" or digits in "98765432109876543210"
+
+
 def has_contact(text: str, own: bool = False) -> bool:
+    # "five five five 123 4567" is a phone number too
+    spelled = _NUMBER_WORD.sub(lambda m: NUMBER_WORDS[m.group().lower()], text)
     # 9-15 digits, longer is probably a discord id
-    # skip round numbers like "100 200 300", those are scores
+    # skip round numbers like "100 200 300", those are scores, and counting like "1 2 3 4 5 6 7 8 9"
     phone = any(9 <= sum(c.isdigit() for c in m.group()) <= 15 and not wordlists.DATE.search(m.group())
                 and not wordlists.IP.fullmatch(m.group())
                 and not all(g.endswith("00") for g in re.findall(r"\d+", m.group()))
-                for m in wordlists.PHONE.finditer(text))
+                and not _counting("".join(re.findall(r"\d", m.group())))
+                for m in wordlists.PHONE.finditer(spelled))
     contact = wordlists.OWN_CONTACT if own else wordlists.CONTACT
-    return phone or bool(wordlists.EMAIL.search(text)) or bool(contact.search(text))
+    # same tricks as the message filter, "sn@p" and "s.n.a.p" are still snap
+    return phone or bool(wordlists.EMAIL.search(text)) or any(contact.search(v) for v in variants(text))
 
 
 # the text plus versions with the tricks undone, [3] is the most readable
@@ -136,9 +158,10 @@ def score(guild_id: int, user_id: int) -> tuple[int, list[str]]:
 
 def nickname_info(nick: str) -> tuple[list[str], str]:
     found, rest = [], nick
-    for what, rx in (("age", AGE_IN_NAME), ("school", SCHOOL_IN_NAME)):
+    for what, rx in (("age", AGE_IN_NAME), ("age", birth_year_in_name()), ("school", SCHOOL_IN_NAME)):
         if rx.search(rest):
-            found.append(what)
+            if what not in found:
+                found.append(what)
             rest = rx.sub(" ", rest)
     if found:
         rest = rest.strip()
@@ -299,6 +322,9 @@ class TeenSafety(commands.Cog):
         if not (kind or contact or restricted):
             return  # nothing to do
         teens = await self._teens_reached(message, s)
+        nearby = not teens and bool(kind or contact)
+        if nearby:  # no reply or mention, but a teen just said something in here
+            teens = await self._teen_nearby(message, s)
         if not teens:
             return
 
@@ -316,7 +342,7 @@ class TeenSafety(commands.Cog):
                 db.bump("removed")
                 for teen in teens:
                     await self._heads_up(message, author, teen)
-        elif restricted:
+        elif restricted and not nearby:
             await self._remove(message, f"Your message in {where} was removed. You can't reply to or mention "
                                         "members under 18 here until the mods review a report about you.")
             return
@@ -352,6 +378,33 @@ class TeenSafety(commands.Cog):
                 found[uid] = member
         found.pop(message.author.id, None)
         return [m for m in found.values() if not m.bot and not self.exempt(m) and self.band(m, s) == TEEN]
+
+    # the teen who talked in this channel right before, or whose thread it is. only looked up for flagged messages
+    async def _teen_nearby(self, message: discord.Message, s) -> list[discord.Member]:
+        guild, cutoff = message.guild, message.created_at.timestamp() - NEARBY_SECONDS
+        ids = []
+        try:
+            async for m in message.channel.history(limit=NEARBY_MESSAGES, before=message):
+                if m.created_at.timestamp() < cutoff:
+                    break
+                if not m.author.bot and m.author.id != message.author.id and m.author.id not in ids:
+                    ids.append(m.author.id)
+        except discord.HTTPException:
+            pass
+        owner = getattr(message.channel, "owner_id", None)
+        if owner and owner != message.author.id and owner not in ids:
+            ids.append(owner)
+        for uid in ids:
+            # history gives users, not members, so get the member to see their roles
+            member = guild.get_member(uid)
+            if member is None:
+                try:
+                    member = await guild.fetch_member(uid)
+                except discord.HTTPException:
+                    continue
+            if not member.bot and not self.exempt(member) and self.band(member, s) == TEEN:
+                return [member]
+        return []
 
     async def _remove(self, message: discord.Message, why: str, mistake: bool = True) -> bool:
         try:

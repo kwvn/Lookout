@@ -32,7 +32,7 @@ PROTECTIONS = [
     ("selfie_guard", "Selfie Tip", "Teens get a tip when they post a photo of themselves in public."),
     ("nick_check", "Nickname Check", "Teens get a tip when their nickname shows their age, school or city."),
     ("tips_dm", "Safety Tips DM", "Teens get the safety tips once, the first time Lookout sees them."),
-    ("alt_catcher", "Alt Catcher", "Lets the mods know when someone who was kept away is back on a new account."),
+    ("alt_catcher", "Alt Catcher", "Lets the mods know when someone who left during a case is back on a new account."),
 ]
 TOGGLES = {name: (title, text) for name, title, text in PROTECTIONS} | {
     "age_check": ("Age Mismatch", "Lets the mods know when someone says an age that doesn't match their age role."),
