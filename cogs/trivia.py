@@ -294,6 +294,8 @@ def leaderboard_view(guild_id: int, user_id: int) -> discord.ui.LayoutView:
                              app_commands.Choice(name="Both", value="both")])
 async def trivia_command(interaction: discord.Interaction, questions: app_commands.Range[int, 1, 10] = 5,
                          seconds: int = 20, topic: str = "both", ping: discord.Role | None = None):
+    if not interaction.client.is_staff(interaction.user):
+        return await interaction.response.send_message(view=ui_kit.note("Only mods can start trivia."), ephemeral=True)
     cog = interaction.client.get_cog("Trivia")
     channel = interaction.channel
     if channel.id in cog.games:
@@ -330,7 +332,7 @@ async def trivia_command(interaction: discord.Interaction, questions: app_comman
 # only synced to the support server (bot.py)
 COMMAND = app_commands.Command(name="trivia", description="Start a safety trivia game in this channel",
                                callback=trivia_command)
-COMMAND.default_permissions = discord.Permissions(manage_messages=True)
+COMMAND.default_permissions = discord.Permissions(moderate_members=True)  # same as the other mod commands
 COMMAND.guild_only = True
 
 
@@ -427,7 +429,8 @@ class Trivia(commands.Cog):
         if not game or parts[1] != "end" or parts[2:3] != [str(game.id)] or game.ended:
             return await interaction.response.send_message(view=ui_kit.note("That game's already over."),
                                                            ephemeral=True)
-        if interaction.user.id != game.host and not interaction.permissions.manage_messages:
+        user = interaction.user
+        if user.id != game.host and not (isinstance(user, discord.Member) and self.bot.is_staff(user)):
             return await interaction.response.send_message(view=ui_kit.note("Only mods can do that."), ephemeral=True)
         game.ended = True
         game.wake.set()
