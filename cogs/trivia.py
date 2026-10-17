@@ -11,6 +11,7 @@ import ui_kit
 
 PREFIX = "lktrivia"
 PAUSE = 10  # seconds each answer stays up before it moves on
+LEAD_IN = 30  # seconds before the first question when a role gets pinged, so people have time to show up
 
 # question, right answer, wrong answers, why
 SAFETY = [
@@ -221,11 +222,20 @@ def _names(ids: list[int], limit: int = 10) -> str:
     return names + (f" and {len(ids) - limit} more" if len(ids) > limit else "")
 
 
+# the ping, a little before the first question
+def start_view(game: Game, role: discord.Role, starts: int) -> discord.ui.LayoutView:
+    each = TIMES.get(game.seconds, f"{game.seconds} seconds")
+    return ui_kit.card(ui_kit.titled(ui_kit.mascot("think"), game.title),
+                       f"{role.mention} **A game is starting!**\n"
+                       "Pick an answer on each question. Every right one gets you a point.",
+                       subtitle=f"{_count(len(game.questions), 'question')} · {each} each · first one <t:{starts}:R>")
+
+
 def question_view(game: Game) -> discord.ui.LayoutView:
     text = game.questions[game.number - 1][0]
     buttons = [discord.ui.Button(label=option, custom_id=f"{PREFIX}:{game.id}:{game.number}:{i}")
                for i, option in enumerate(game.options)]
-    return ui_kit.card(ui_kit.titled(ui_kit.mascot("peek"), game.title), (None, [f"## {text}", *buttons]),
+    return ui_kit.card(ui_kit.titled(ui_kit.mascot("think"), game.title), (None, [f"## {text}", *buttons]),
                        subtitle=f"Question {game.number} of {len(game.questions)} · ends <t:{game.ends}:R>")
 
 
@@ -276,13 +286,14 @@ def leaderboard_view(guild_id: int, user_id: int) -> discord.ui.LayoutView:
 @app_commands.rename(seconds="time")
 @app_commands.describe(questions="How many questions (default 5)",
                        seconds="Time for each question (default 20 seconds)",
-                       topic="What the questions are about (default both)")
+                       topic="What the questions are about (default both)",
+                       ping=f"A role to ping. The first question then waits {LEAD_IN} seconds so people can join")
 @app_commands.choices(seconds=[app_commands.Choice(name=name, value=s) for s, name in TIMES.items()],
                       topic=[app_commands.Choice(name="Staying safe online", value="safety"),
                              app_commands.Choice(name="Lookout", value="lookout"),
                              app_commands.Choice(name="Both", value="both")])
 async def trivia_command(interaction: discord.Interaction, questions: app_commands.Range[int, 1, 10] = 5,
-                         seconds: int = 20, topic: str = "both"):
+                         seconds: int = 20, topic: str = "both", ping: discord.Role | None = None):
     cog = interaction.client.get_cog("Trivia")
     channel = interaction.channel
     if channel.id in cog.games:
@@ -292,17 +303,26 @@ async def trivia_command(interaction: discord.Interaction, questions: app_comman
     if not (perms.view_channel and perms.send_messages):
         return await interaction.response.send_message(view=ui_kit.note(
             "Lookout can't post here. It needs **Send Messages** in this channel."), ephemeral=True)
+    if ping and ping.is_default():
+        return await interaction.response.send_message(view=ui_kit.note(
+            "Pick another role to ping. Lookout doesn't ping @everyone."), ephemeral=True)
+    # otherwise the ping shows up but nobody gets notified
+    if ping and not (ping.mentionable or perms.mention_everyone):
+        return await interaction.response.send_message(view=ui_kit.note(
+            f"Lookout can't ping {ping.mention} yet. Turn on **Allow anyone to @mention this role** in the role's "
+            "settings, or give Lookout **Mention @everyone, @here, and All Roles** in this channel."), ephemeral=True)
     pool = TOPICS.get(topic, TOPICS["both"])
     game = Game(random.sample(pool, min(questions, len(pool))), seconds,
                 "Lookout Trivia" if topic == "lookout" else "Safety Trivia", interaction.user.id)
     cog.games[channel.id] = game
+    pinging = f"Pinging {ping.mention}, the first question comes in {LEAD_IN} seconds. " if ping else ""
     await interaction.response.send_message(view=ui_kit.note(
         f"**Trivia started.** {_count(len(game.questions), 'question')}, {TIMES.get(seconds, f'{seconds} seconds')} "
-        "each.\n-# It moves on by itself after each answer. Press **End Game** to stop early.",
+        f"each.\n-# {pinging}It moves on by itself after each answer. Press **End Game** to stop early.",
         buttons=[_end_button(game)]),
         ephemeral=True)
     try:
-        await cog.play(game, channel)
+        await cog.play(game, channel, ping)
     finally:
         cog.games.pop(channel.id, None)
 
@@ -320,8 +340,21 @@ class Trivia(commands.Cog):
         self.games: dict[int, Game] = {}  # channel id -> game
         self.owner_command = COMMAND
 
-    async def play(self, game: Game, channel) -> None:
+    async def play(self, game: Game, channel, ping: discord.Role | None = None) -> None:
         quiet = discord.AllowedMentions.none()
+        if ping:
+            try:
+                start = await channel.send(view=start_view(game, ping, int(time.time()) + LEAD_IN),
+                                           allowed_mentions=ui_kit.ping_for(ping.id))
+            except discord.HTTPException:
+                return
+            await _wait(game, LEAD_IN)  # End Game cuts it short
+            if game.ended:  # called off before the first question, so there's nothing to show results for
+                try:
+                    await start.edit(view=ui_kit.note("**This game was called off.**"), allowed_mentions=quiet)
+                except discord.HTTPException:
+                    pass
+                return
         message = None
         for number, (_, answer, wrong, _) in enumerate(game.questions, 1):
             game.number = number

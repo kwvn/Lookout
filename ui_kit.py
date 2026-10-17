@@ -324,7 +324,7 @@ def remove_actions(box: ui.Container) -> None:
             box.remove_item(item)
 
 
-# only ever ping the staff role
+# only ever ping that one role (the staff role, or the trivia ping)
 def ping_for(role_id: int | None) -> discord.AllowedMentions:
     return discord.AllowedMentions(everyone=False, users=False,
                                    roles=[discord.Object(role_id)] if role_id else False)

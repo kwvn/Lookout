@@ -17,6 +17,7 @@ except ImportError:  # not public, see wordlists_example.py
 
 PREFIX = "lksetup"  # custom_id prefix
 TEST_DAYS = 7  # warning signs test mode, in days
+MEERKATS = len(list((config.ASSETS / "meerkat").glob("looky_*.png")))  # how many emojis Add Emojis gives a server
 
 REMINDERS = [(0, "Off"), (5, "One ping after 5 minutes"), (10, "One ping after 10 minutes"),
              (15, "One ping after 15 minutes"), (30, "One ping after 30 minutes")]
@@ -361,7 +362,7 @@ def extras_page(guild, s: db.GuildSettings):
                  ("Images", [_toggle(s, "image_scan")]),
                  ("For Mods", [_toggle(s, "weekly_summary")]),
                  ("Meerkat Emojis", [discord.ui.Section(
-                     "**Looky**\n-# Lookout's meerkat. Adds 12 emojis your members can use. "
+                     f"**Looky**\n-# Lookout's meerkat. Adds {MEERKATS} emojis your members can use. "
                      + "".join(ui_kit.ICONS.get(f"looky_{m}", "") for m in ("wave", "sus", "love", "watching")),
                      accessory=_button("Add Emojis", "emojis"))]),
                  ("Your Data", f"**Cases and history:** kept {config.RETENTION_DAYS} days\n"
