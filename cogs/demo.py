@@ -13,7 +13,7 @@ import ui_kit
 PREFIX = "lkdemo"
 PAGES = 8
 # which looky each page gets
-MOODS = {1: "noted", 2: "mod", 3: "watching", 4: "love", 5: "mod", 6: "noted", 7: "party", 8: "wave"}
+MOODS = {1: "noted", 2: "think", 3: "watching", 4: "love", 5: "thumbsup", 6: "noted", 7: "party", 8: "wave"}
 CLAIMED, WARNED, TIMED_OUT, DISCONNECTED, RESOLVED = 1, 2, 4, 8, 16  # bit flags for the example alert
 
 WEEK = dict(reports=47, images=12, warnings=18, timeouts=9, disconnects=6, opened=31, resolved=28, avg_seconds=14 * 60, still_open=3, daily=[4, 6, 3, 8, 11, 9, 6],

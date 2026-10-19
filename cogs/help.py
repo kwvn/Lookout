@@ -101,7 +101,7 @@ class Help(commands.Cog):
                           "mods are told.\n-# Lookout never reads your DMs or listens to voice. It only sees a DM "
                           "you report yourself.", None))
         if isinstance(user, discord.Member) and self.bot.is_staff(user):
-            items.append(("staff", ui_kit.titled(looky("mod"), "For Mods"), "\n".join([
+            items.append(("staff", ui_kit.titled(looky("watching"), "For Mods"), "\n".join([
                 f"{c('cases')} Browse open and past alerts",
                 f"{c('history')} See a member's warnings, reports and flags",
                 f"{c('warn')} Warn a member. They get a DM.",

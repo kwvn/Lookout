@@ -143,6 +143,19 @@ class LookoutBot(commands.AutoShardedBot):
                 ui_kit.ICONS[path.stem] = str(await self._icon(existing, path.stem, path.stem, path.read_bytes()))
             except Exception as e:
                 log.warning("Couldn't load the %s emoji: %s", path.stem, e)
+        await self._drop_old_pack_emojis(existing)
+
+    # a looky_ emoji whose picture was taken out of the pack gets deleted too
+    async def _drop_old_pack_emojis(self, existing: list[discord.Emoji]):
+        pack = {path.stem for path in (config.ASSETS / "meerkat").glob("looky_*.png")}
+        for e in existing:
+            m = re.fullmatch(r"(looky_[a-z]+)(_[0-9a-f]{6})?", e.name)
+            if m and m.group(1) not in pack:
+                try:
+                    await e.delete()
+                    log.info("Deleted the %s emoji, it's not in the pack anymore", e.name)
+                except discord.HTTPException as err:
+                    log.warning("Couldn't delete the %s emoji: %s", e.name, err)
 
     async def _icon(self, existing: list[discord.Emoji], key: str, name: str, image: bytes) -> discord.Emoji:
         code = hashlib.md5(image).hexdigest()
