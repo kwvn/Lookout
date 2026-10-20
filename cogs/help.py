@@ -2,7 +2,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-import config
 import db
 import ui_kit
 
@@ -110,14 +109,14 @@ class Help(commands.Cog):
                 f"{c('trivia')} Host a safety trivia game in the trivia channel",
             ]), None))
         if isinstance(user, discord.Member) and user.guild_permissions.manage_guild:
-            items.append(("settings", "For Admins", f"{c('setup')} Every setting in one place, plus a Safety Checkup "
-                                                    f"for your server\n-# In {c('summary')}, admins also get Mod "
-                                                    "Stats. A weekly summary goes to the mod channel every Monday.",
+            items.append(("settings", ui_kit.titled(looky("knight"), "For Admins"),
+                          f"{c('setup')} Every setting in one place, plus a Safety Checkup for your server\n"
+                          f"-# In {c('summary')}, admins also get Mod Stats. A weekly summary goes to the mod "
+                          "channel every Monday.",
                           None))
         items.append(("warning", ui_kit.titled(looky("love"), "Safety Tips"), "Tips for staying safe on Discord.",
                       [discord.ui.Button(label="Safety Tips", custom_id="lkhelp:tips"),
-                       discord.ui.Button(label="See a Demo", custom_id="lkhelp:demo"),
-                       discord.ui.Button(label="YourSitee", style=discord.ButtonStyle.link, url=config.SITE_URL)]))
+                       discord.ui.Button(label="See a Demo", custom_id="lkhelp:demo")]))
         view = ui_kit.boxes("Help", "What Lookout does in this server", items, icon="help")
         await interaction.response.send_message(view=view, files=ui_kit.files(view), ephemeral=True)
 
