@@ -37,6 +37,7 @@ HEARTBEAT_URL = os.getenv("HEARTBEAT_URL", "").strip()
 TOPGG_TOKEN = os.getenv("TOPGG_TOKEN", "").strip()
 
 SUPPORT_URL = "https://discord.gg/BKedYyHgn9"
+SITE_URL = "https://yoursit.ee/lookout"  # the YourSitee link page
 # where /totals and /post-demo get synced, looked up from SUPPORT_URL if empty
 SUPPORT_GUILD_ID = _int("SUPPORT_GUILD_ID", 0)
 

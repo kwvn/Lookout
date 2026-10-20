@@ -213,7 +213,8 @@ class LookoutBot(commands.AutoShardedBot):
                                            "- Removes contact info sent to teens\n- Sends reports privately to your mods",
              None),
             ("help", "Need Help?", f"Anyone can type {cmd('help')}. For anything else, ask in the support server.",
-             [discord.ui.Button(label="Support Server", style=discord.ButtonStyle.link, url=config.SUPPORT_URL)]),
+             [discord.ui.Button(label="Support Server", style=discord.ButtonStyle.link, url=config.SUPPORT_URL),
+              discord.ui.Button(label="YourSitee", style=discord.ButtonStyle.link, url=config.SITE_URL)]),
         ], image="attachment://welcome.png" if files else None,
            image_text="Making Discord safer for teens: a message filter, a contact filter and private reports.")
         try:
