@@ -863,7 +863,7 @@ class TeenSafety(commands.Cog):
         action, ids = parts[1], [int(p) for p in parts[2:] if p.isdigit()]
         if action in ("taccept", "tdecline", "tremove", "tapprove", "tdeny"):  # old /trust buttons
             return await interaction.response.send_message(
-                view=ui_kit.note("Trusted members were removed from Lookout, so there's nothing to do here."),
+                view=ui_kit.note("This button doesn't work anymore."),
                 ephemeral=interaction.guild is not None)
         if action in ("tell", "tellmore", "tellsend", "nick", "nickkeep"):  # DM buttons
             return await self._from_dm(interaction, action, ids)

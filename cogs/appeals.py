@@ -58,8 +58,8 @@ class Appeals(commands.Cog):
         s = db.get_settings(guild_id)
         channel = guild.get_channel(s.staff_channel_id) if s.staff_channel_id else None
         if not s.appeals or channel is None:
-            return await self._reply(interaction, "This server doesn't take appeals through Lookout. Reach out to its "
-                                                  "mods instead.")
+            return await self._reply(interaction, "This server doesn't take appeals through Lookout. Ask its mods "
+                                                  "instead.")
         earlier = db.get_appeal(warning_id)
         if earlier:
             waiting = earlier["status"] == "pending"

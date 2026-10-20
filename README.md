@@ -10,13 +10,13 @@ Support server: https://discord.gg/BKedYyHgn9
 
 ## Running
 
-I'd rather you didn't run your own instance, just invite the bot. The source is here so server owners can see what it does with their messages.
+I'd rather you didn't run your own instance. Just invite the bot. The source is here so server owners can see what it does with their messages.
 
 If you want to anyway:
 
 1. **Get Python 3.12**
 
-   Older versions might work, I haven't tried.
+   Older versions might work, but I haven't tried them.
 
 2. **Set up a venv**
 
