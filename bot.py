@@ -21,7 +21,7 @@ log = logging.getLogger("lookout")
 
 EXTENSIONS = ["cogs.setup", "cogs.help", "cogs.demo", "cogs.staff", "cogs.cases", "cogs.cleanup",
               "cogs.reports", "cogs.reminder", "cogs.appeals", "cogs.summary", "cogs.imagescan", "cogs.teensafety",
-              "cogs.totals", "cogs.trivia"]
+              "cogs.totals", "cogs.trivia", "cogs.network"]
 # rotates every few minutes
 STATUSES = ["Always on watch", "On watch · /help", "Keeping teens safe", "Guarding {servers}"]
 STATUS_MINUTES = 5
@@ -86,14 +86,14 @@ class LookoutBot(commands.AutoShardedBot):
             except discord.HTTPException:
                 guild_id = 0
         if not guild_id:
-            return log.info("Couldn't find the support server, so /totals and /post-demo are off")
+            return log.info("Couldn't find the support server, so /totals, /post-demo and /network are off")
         guild = discord.Object(guild_id)
         for cmd in commands_:
             self.tree.add_command(cmd, guild=guild, override=True)
         try:
             await self._sync(f"commands:{guild_id}", guild=guild)
         except discord.HTTPException as e:
-            log.info("Couldn't add /totals and /post-demo to the support server: %s", e)
+            log.info("Couldn't add /totals, /post-demo and /network to the support server: %s", e)
 
     # syncing on every restart is slow and gets rate limited after a few restarts, so only when something changed
     async def _sync(self, key: str, guild: discord.abc.Snowflake | None = None) -> list:

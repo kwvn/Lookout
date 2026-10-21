@@ -6,6 +6,8 @@ A teen safety bot for Discord servers where teens and adults hang out together.
 
 It checks replies and mentions from adults to teens and removes the ones that cross the line, plus any contact info sent to teens. Everything else is left alone. Mods get private reports and one place to handle them.
 
+Servers that use Lookout also warn each other through the Lookout Network. If Lookout's filter catches someone in 2 servers, with 2 different teens, other servers' mods get a heads-up when that person shows up. Mods can't add anyone to it.
+
 Support server: https://discord.gg/BKedYyHgn9
 
 ## Running
@@ -55,7 +57,7 @@ It doesn't need Administrator and it can't ban, kick or manage roles.
 
 ## Privacy
 
-Records are deleted after 90 days and warning signs after 30. Removing the bot deletes that server's data.
+Records are deleted after 90 days, warning signs after 30 and Lookout Network records after a year. Removing the bot deletes that server's data, except its Lookout Network records.
 
 [Privacy Policy](https://mammoth-elbow-750.notion.site/Lookout-Privacy-Policy-cbc29be557c84c9085bf55ac9e90e351) · [Terms of Service](https://mammoth-elbow-750.notion.site/Lookout-Terms-of-Service-811dfe2233704bf780b9433ddee23df3)
 

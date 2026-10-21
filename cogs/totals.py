@@ -27,7 +27,11 @@ async def totals_command(interaction: discord.Interaction):
     view = discord.ui.LayoutView(timeout=None)
     view.add_item(discord.ui.MediaGallery(discord.MediaGalleryItem("attachment://totals.png",
                                                                    description="Lookout's totals")))
-    view.add_item(discord.ui.TextDisplay("-# Someone in two servers is counted twice, so Users runs a little high."))
+    listed, heads_ups = db.network_size(), db.totals().get("network_alerts", 0)
+    view.add_item(discord.ui.TextDisplay(
+        f"**Lookout Network:** {listed:,} account{'' if listed == 1 else 's'} on it · {heads_ups:,} "
+        f"heads-up{'' if heads_ups == 1 else 's'} sent\n"
+        "-# Someone in two servers is counted twice, so Users runs a little high."))
     await interaction.followup.send(view=view, file=discord.File(io.BytesIO(data), filename="totals.png"),
                                     ephemeral=True)
 

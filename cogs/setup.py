@@ -28,13 +28,16 @@ PROTECTIONS = [
     ("flirty_filter", "Message Filter", "Removes inappropriate messages adults send to teens."),
     ("contact_filter", "Contact Info Filter", "Removes phone numbers, emails and socials sent to teens."),
     ("teen_restrict", "Keep Away After 2 Reports", "If 2 teens report the same adult, their replies to teens get "
-                                                   "removed until the mods decide."),
+                                                   "removed until the mods decide. Teens who joined this week or have "
+                                                   "a new account don't count."),
     ("selfie_guard", "Selfie Tip", "Teens get a tip when they post a photo of themselves in public."),
     ("nick_check", "Nickname Check", "Teens get a tip when their nickname shows their age, school or city."),
     ("tips_dm", "Safety Tips DM", "Teens get the safety tips once, the first time Lookout sees them."),
     ("alt_catcher", "Alt Catcher", "Lets the mods know when someone who left during a case is back on a new account."),
 ]
 TOGGLES = {name: (title, text) for name, title, text in PROTECTIONS} | {
+    "network": ("Lookout Network", "Lets the mods know when someone Lookout caught sending inappropriate messages to "
+                                   "teens in other servers shows up here. Turning it off also stops sharing."),
     "age_check": ("Age Mismatch", "Lets the mods know when someone says an age that doesn't match their age role."),
     "report_updates": ("Reporter Updates", "Reporters get a DM when the mods close their case."),
     "appeals": ("Appeals", "Warned members can appeal from the warning DM."),
@@ -45,7 +48,7 @@ PAGE_OF = {"filter_languages": "langs", "staff_channel": "staff", "staff_role": 
            "young_roles": "ages", "adult_roles": "ages", "no_age_role": "ages", "age_check": "ages", "age_mode": "ages",
            "adult_button": "ages",
            "post_panel": "reports", "post_tips": "reports", "report_updates": "reports", "appeals": "reports",
-           "image_scan": "extras", "weekly_summary": "extras", "trivia_channel": "extras"}
+           "image_scan": "extras", "weekly_summary": "extras", "trivia_channel": "extras", "network": "extras"}
 VERIFICATION = {
     discord.VerificationLevel.none: "None. Anyone can chat right away.",
     discord.VerificationLevel.low: "Low. Members only need a verified email.",
@@ -364,6 +367,7 @@ def extras_page(guild, s: db.GuildSettings):
                                       default_values=[discord.Object(s.trivia_channel_id)] if s.trivia_channel_id else [])
     return _card(guild, "Extras", "Other protections and reports for the mods",
                  ("Images", [_toggle(s, "image_scan")]),
+                 ("Lookout Network", [_toggle(s, "network")]),
                  ("For Mods", [_toggle(s, "weekly_summary")]),
                  ("Trivia", [trivia_where + "\n-# Mods can host safety trivia games with /trivia, only in this channel.",
                              trivia]),
@@ -373,8 +377,9 @@ def extras_page(guild, s: db.GuildSettings):
                      accessory=_button("Add Emojis", "emojis"))]),
                  ("Your Data", f"**Cases and history:** kept {config.RETENTION_DAYS} days\n"
                                f"**Warning signs:** kept {db.SIGNAL_DAYS} days\n"
-                               "-# Older records are deleted automatically. Everything is deleted if Lookout leaves "
-                               "the server."),
+                               f"**Lookout Network:** kept {db.NETWORK_DAYS // 30} months\n"
+                               "-# Older records are deleted automatically. Everything except Lookout Network records "
+                               "is deleted if Lookout leaves the server."),
                  buttons=[_button("Back", "page", "home")])
 
 
@@ -686,6 +691,8 @@ class Setup(commands.Cog):
         if action == "toggle" and arg in TOGGLES:
             setattr(s, arg, not getattr(s, arg))
             saved(f"{arg}: {'on' if getattr(s, arg) else 'off'}")
+            if arg == "network" and not s.network:
+                db.stop_sharing(guild.id)
             return await show(PAGES[PAGE_OF.get(arg, "teen")](guild, s))
         if action == "risk" and arg in ("off", "test", "on"):
             s.risk_mode = arg

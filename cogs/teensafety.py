@@ -33,6 +33,9 @@ RISK_THRESHOLD = 8
 ALT_DAYS = 30  # alt check window
 NEARBY_SECONDS = 120  # an adult's message this soon after a teen's counts as talking to them
 NEARBY_MESSAGES = 5
+REPORTER_DAYS = 7  # a teen's report only counts toward Keep Away after a week in the server
+NETWORK_JOINED_DAYS = 14  # a server only shares with the lookout network after having lookout this long
+NETWORK_MEMBERS = 50  # and with at least this many members
 
 # nickname info. cities only count next to an age or school, never as the first word (Austin, Dallas...)
 # "mia 14" and "14yo" are ages, "Sniper13" isn't
@@ -298,7 +301,11 @@ class TeenSafety(commands.Cog):
         if message.guild is None or author.bot or not isinstance(author, discord.Member):
             return
         s = db.get_settings(message.guild.id)
-        if not (s.configured and s.teen_safety) or self.exempt(author):
+        if not s.configured or self.exempt(author):
+            return
+        if s.network and db.has_network_catches(author.id):
+            self._background(self._network_check(message, author, s))
+        if not s.teen_safety:
             return
         self._background(self._look(author, s))
         mine = self.band(author, s)
@@ -340,6 +347,8 @@ class TeenSafety(commands.Cog):
             await self._flirty_alert(message, author, teens[0], kind, read_as, removed, s, lang)
             if removed:  # only DM the teen if it actually got deleted
                 db.bump("removed")
+                if not nearby:
+                    self._share(message, author, teens[0], s)
                 for teen in teens:
                     await self._heads_up(message, author, teen)
         elif restricted and not nearby:
@@ -489,8 +498,13 @@ class TeenSafety(commands.Cog):
             return
         if self.exempt(target):
             return
-        db.add_signal(guild.id, target.id, "teen_report", reporter.id)
-        if s.teen_restrict and not db.restricted(guild.id, target.id) and len(db.teen_reporters(guild.id, target.id)) >= 2:
+        # alts made to fake-report someone are new, so they don't count toward keeping anyone away
+        now = discord.utils.utcnow()
+        new = (not reporter.joined_at or (now - reporter.joined_at).days < REPORTER_DAYS
+               or (now - reporter.created_at).days < NEW_ACCOUNT_DAYS)
+        db.add_signal(guild.id, target.id, "teen_report", reporter.id, "new" if new else "")
+        if (s.teen_restrict and not db.restricted(guild.id, target.id)
+                and len(db.teen_reporters(guild.id, target.id, settled_only=True)) >= 2):
             db.set_restricted(guild.id, target.id, True)
             db.log(guild.id, target.id, "teen_restricted", "Reported by 2 different teens")
             await self._case(guild, s, target.id, "teen", "Kept Away From Teens", [
@@ -805,6 +819,41 @@ class TeenSafety(commands.Cog):
                                 "restriction.",
                          buttons=buttons, urgent=True, thumbnail=member.display_avatar.url)
 
+    # lookout network. only removed replies and mentions count (not "nearby"), never anything a mod does,
+    # and only from servers that have had lookout a while, so a server made yesterday can't put anyone on it
+
+    def _share(self, message: discord.Message, adult: discord.Member, teen: discord.Member, s) -> None:
+        guild, me = message.guild, message.guild.me
+        if not s.network or (guild.member_count or 0) < NETWORK_MEMBERS or not me or not me.joined_at:
+            return
+        if (discord.utils.utcnow() - me.joined_at).days < NETWORK_JOINED_DAYS:
+            return
+        db.add_network_catch(guild.id, adult.id, teen.id, message.id, message.content)
+
+    async def _network_check(self, message: discord.Message, member: discord.Member, s) -> None:
+        guild = member.guild
+        record = db.network_record(member.id, skip_guild=guild.id)
+        if not record["listed"] or not db.network_alert_once(guild.id, member.id):
+            return
+        n, last = len(record["catches"]), int(record["catches"][0]["created_at"])
+        teen_here = s.teen_safety and self.band(member, s, explicit=True) == TEEN
+        buttons = action_buttons(guild.id, message.channel.id, member.id)
+        buttons.insert(2, self._btn("Keep Away From Teens", "netkeep", member.id))
+        await self._case(guild, s, member.id, "teen", "Caught in Other Servers", [
+            ("member", "Who", ui_kit.member_line(member)),
+            ("warning", "What Happened Before",
+             f"In **{record['servers']} other servers** that use Lookout, its filter removed **{n} inappropriate "
+             f"message{'' if n == 1 else 's'}** this account sent to **{record['teens']} different teens**. The last "
+             f"one was <t:{last}:R>." + ("\n**They have a teen role here.**" if teen_here else "")
+             + "\n-# Lookout doesn't say which servers, who the teens were, or what the messages said."),
+            ("cases", "Why Now", f"They just sent a message in {message.channel.mention}. "
+                                 f"[Jump to It]({message.jump_url})"),
+        ], footer="This is a heads-up from the Lookout Network, not proof. Lookout hasn't done anything to them here. "
+                  "Keep it inside the mod team.",
+            buttons=buttons, urgent=True, thumbnail=member.display_avatar.url, evidence=message.jump_url,
+            summary=f"Caught by Lookout in {record['servers']} other servers")
+        db.bump("network_alerts")
+
     # report to discord
 
     async def _discord_report(self, interaction: discord.Interaction) -> None:
@@ -881,9 +930,10 @@ class TeenSafety(commands.Cog):
             return await self._stamp(interaction, f"Kept by {user.mention}. Press Lift anytime to end it.",
                                      buttons=[self._btn("Lift", "lift", ids[0]),
                                               self._btn("Report to Discord", "tns", ids[0])], state="Kept")
-        if action == "keepaway":  # alt alert
+        if action in ("keepaway", "netkeep"):  # alt alert, network heads-up
             db.set_restricted(guild.id, ids[0], True)
-            db.log(guild.id, ids[0], "teen_restricted", "Kept away from teens as a possible alt account",
+            db.log(guild.id, ids[0], "teen_restricted", "Kept away from teens as a possible alt account"
+                   if action == "keepaway" else "Kept away from teens after a Lookout Network heads-up",
                    actor_id=user.id)
             return await self._stamp(interaction, f"Kept away from teens by {user.mention}. Press Lift anytime to "
                                                   "end it.",

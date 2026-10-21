@@ -88,6 +88,17 @@ _conn.executescript(
         guild_id INTEGER, user_id INTEGER, points INTEGER,
         PRIMARY KEY (guild_id, user_id)
     );
+    -- lookout network: messages to teens the filter removed, shared between servers.
+    -- stays when lookout leaves a server, otherwise a server could kick it to wipe someone
+    CREATE TABLE IF NOT EXISTS network_catches (
+        guild_id INTEGER, user_id INTEGER, teen_id INTEGER, message_id INTEGER, text TEXT, created_at REAL,
+        PRIMARY KEY (guild_id, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS nc_user ON network_catches (user_id, created_at);
+    CREATE TABLE IF NOT EXISTS network_alerts (
+        guild_id INTEGER, user_id INTEGER, created_at REAL,
+        PRIMARY KEY (guild_id, user_id)
+    );
 
     -- removed features (age-aware voice, /trust, first-contact heads-up, selfie reply block)
     DROP TABLE IF EXISTS first_contacts;
@@ -111,7 +122,8 @@ _GUILD_COLS = {"weekly_summary": "INTEGER DEFAULT 1", "summary_sent_at": "REAL",
                "selfie_guard": "INTEGER DEFAULT 1", "nick_check": "INTEGER DEFAULT 1",
                "alt_catcher": "INTEGER DEFAULT 1", "tips_channel_id": "INTEGER", "flirty_filter": "INTEGER DEFAULT 1",
                "checkup_score": "INTEGER", "checkup_at": "REAL", "filter_languages": "TEXT DEFAULT 'en'",
-               "age_check": "INTEGER DEFAULT 1", "adult_channel_id": "INTEGER", "trivia_channel_id": "INTEGER"}
+               "age_check": "INTEGER DEFAULT 1", "adult_channel_id": "INTEGER", "trivia_channel_id": "INTEGER",
+               "network": "INTEGER DEFAULT 1"}
 _have = {r[1] for r in _conn.execute("PRAGMA table_info(guilds)")}
 for _col, _type in _GUILD_COLS.items():
     if _col not in _have:
@@ -170,6 +182,7 @@ class GuildSettings:
     age_check: bool = True               # age mismatch
     adult_channel_id: int | None = None  # where the 18+ button was posted
     trivia_channel_id: int | None = None  # the only channel /trivia runs in
+    network: bool = True                 # lookout network: shares catches and gets heads-ups
 
     @property
     def configured(self) -> bool:
@@ -202,9 +215,9 @@ _COLS = ("staff_channel_id", "staff_role_id", "image_scan", "weekly_summary", "r
          "appeals", "report_updates", "panel_channel_id", "young_roles", "older_roles", "adult_roles",
          "no_age_role", "contact_filter", "teen_restrict", "risk_mode", "risk_test_until", "tips_dm",
          "selfie_guard", "nick_check", "alt_catcher", "tips_channel_id", "flirty_filter", "checkup_score",
-         "checkup_at", "filter_languages", "age_check", "adult_channel_id", "trivia_channel_id")
+         "checkup_at", "filter_languages", "age_check", "adult_channel_id", "trivia_channel_id", "network")
 _BOOLS = ("image_scan", "weekly_summary", "appeals", "report_updates", "contact_filter", "teen_restrict",
-          "tips_dm", "selfie_guard", "nick_check", "alt_catcher", "flirty_filter", "age_check")
+          "tips_dm", "selfie_guard", "nick_check", "alt_catcher", "flirty_filter", "age_check", "network")
 
 
 def get_settings(guild_id: int) -> GuildSettings:
@@ -235,7 +248,8 @@ def forget_guild(guild_id: int) -> None:
     for table in ("alert_actions", "reporters"):
         _conn.execute(f"DELETE FROM {table} WHERE message_id IN (SELECT message_id FROM alerts WHERE guild_id=?)",
                       (guild_id,))
-    for table in ("alerts", "appeals", "events", "guilds", "trivia_points") + TEEN_TABLES:
+    # network_catches stay, see the table
+    for table in ("alerts", "appeals", "events", "guilds", "trivia_points", "network_alerts") + TEEN_TABLES:
         _conn.execute(f"DELETE FROM {table} WHERE guild_id=?", (guild_id,))
     _conn.commit()
 
@@ -288,6 +302,8 @@ def purge_old() -> int:
     _conn.execute("DELETE FROM nick_tips WHERE created_at < ?", (cutoff,))
     _conn.execute("DELETE FROM leavers WHERE left_at < ?", (cutoff,))
     _conn.execute("DELETE FROM alt_alerts WHERE created_at < ?", (cutoff,))
+    for table in ("network_catches", "network_alerts"):
+        _conn.execute(f"DELETE FROM {table} WHERE created_at < ?", (time.time() - NETWORK_DAYS * 86400,))
     _conn.commit()
     return cur.rowcount
 
@@ -595,7 +611,7 @@ def clear_member(guild_id: int, user_id: int, what: str) -> int:
             _conn.execute("DELETE FROM alert_actions WHERE message_id=?", (mid,))
             _conn.execute("DELETE FROM reporters WHERE message_id=?", (mid,))
         _conn.execute("DELETE FROM alerts WHERE guild_id=? AND target_id=?", (guild_id, user_id))
-        for table in ("teen_signals", "risk_flags", "nick_tips", "leavers", "alt_alerts"):
+        for table in ("teen_signals", "risk_flags", "nick_tips", "leavers", "alt_alerts", "network_catches"):
             _conn.execute(f"DELETE FROM {table} WHERE guild_id=? AND user_id=?", (guild_id, user_id))
         _conn.commit()
         return cur.rowcount + len(ids)
@@ -671,6 +687,8 @@ def false_alarm(guild_id: int, user_id: int, first_message_id: int) -> None:
                   " AND (detail=? OR detail LIKE ?)", (guild_id, user_id, first, first + ":%"))
     _conn.executemany("DELETE FROM events WHERE guild_id=? AND user_id=? AND kind='teen_flirty' AND message_id=?",
                       [(guild_id, user_id, mid) for mid in ids])
+    _conn.executemany("DELETE FROM network_catches WHERE guild_id=? AND user_id=? AND message_id=?",
+                      [(guild_id, user_id, mid) for mid in ids])
     _conn.commit()
 
 
@@ -681,10 +699,12 @@ def signals(guild_id: int, user_id: int) -> list[dict]:
     return [dict(zip(("kind", "other_id", "detail", "created_at"), r)) for r in rows]
 
 
-def teen_reporters(guild_id: int, user_id: int) -> set[int]:
+def teen_reporters(guild_id: int, user_id: int, settled_only: bool = False) -> set[int]:
+    # "new" = joined this week or has a new account. their reports still count as warning signs
+    extra = " AND detail != 'new'" if settled_only else ""
     return {r[0] for r in _conn.execute(
         "SELECT DISTINCT other_id FROM teen_signals WHERE guild_id=? AND user_id=? AND kind='teen_report'"
-        " AND created_at>=?", (guild_id, user_id, time.time() - SIGNAL_DAYS * 86400))}
+        f" AND created_at>=?{extra}", (guild_id, user_id, time.time() - SIGNAL_DAYS * 86400))}
 
 
 def restricted(guild_id: int, user_id: int) -> bool:
@@ -783,9 +803,65 @@ def message_links(guild_id: int, user_id: int, since: float) -> list[str]:
     return [f"https://discord.com/channels/{guild_id}/{c}/{m}" for c, m in rows]
 
 
+# lookout network
+
+NETWORK_DAYS = 365      # how long a catch counts
+NETWORK_SERVERS = 2     # caught in at least this many servers
+NETWORK_TEENS = 2       # with at least this many different teens
+
+
+def add_network_catch(guild_id: int, user_id: int, teen_id: int, message_id: int, text: str) -> None:
+    _conn.execute("INSERT OR IGNORE INTO network_catches VALUES (?, ?, ?, ?, ?, ?)",
+                  (guild_id, user_id, teen_id, message_id, (text or "")[:200], time.time()))
+    _conn.commit()
+
+
+# runs on every message, so just "is there anything at all"
+def has_network_catches(user_id: int) -> bool:
+    return _conn.execute("SELECT 1 FROM network_catches WHERE user_id=? AND created_at>=? LIMIT 1",
+                         (user_id, time.time() - NETWORK_DAYS * 86400)).fetchone() is not None
+
+
+def network_record(user_id: int, skip_guild: int | None = None) -> dict:
+    rows = _conn.execute("SELECT guild_id, teen_id, text, created_at FROM network_catches WHERE user_id=?"
+                         " AND created_at>=? AND guild_id IS NOT ? ORDER BY created_at DESC",
+                         (user_id, time.time() - NETWORK_DAYS * 86400, skip_guild)).fetchall()
+    servers, teens = {r[0] for r in rows}, {r[1] for r in rows}
+    return {"catches": [dict(zip(("guild_id", "teen_id", "text", "created_at"), r)) for r in rows],
+            "servers": len(servers), "teens": len(teens),
+            "listed": len(servers) >= NETWORK_SERVERS and len(teens) >= NETWORK_TEENS}
+
+
+def network_alert_once(guild_id: int, user_id: int) -> bool:
+    cur = _conn.execute("INSERT OR IGNORE INTO network_alerts VALUES (?, ?, ?)", (guild_id, user_id, time.time()))
+    _conn.commit()
+    return cur.rowcount == 1
+
+
+# an accepted appeal
+def clear_network(user_id: int) -> int:
+    cur = _conn.execute("DELETE FROM network_catches WHERE user_id=?", (user_id,))
+    _conn.execute("DELETE FROM network_alerts WHERE user_id=?", (user_id,))
+    _conn.commit()
+    return cur.rowcount
+
+
+# a server turned the network off
+def stop_sharing(guild_id: int) -> None:
+    _conn.execute("DELETE FROM network_catches WHERE guild_id=?", (guild_id,))
+    _conn.commit()
+
+
+def network_size() -> int:
+    return _conn.execute(
+        "SELECT COUNT(*) FROM (SELECT user_id FROM network_catches WHERE created_at>=? GROUP BY user_id"
+        " HAVING COUNT(DISTINCT guild_id)>=? AND COUNT(DISTINCT teen_id)>=?)",
+        (time.time() - NETWORK_DAYS * 86400, NETWORK_SERVERS, NETWORK_TEENS)).fetchone()[0]
+
+
 # totals
 
-# keys: removed, contact, filter_alerts, false_alarms, handled
+# keys: removed, contact, filter_alerts, false_alarms, handled, network_alerts
 def bump(key: str, n: int = 1) -> None:
     _conn.execute("INSERT INTO totals VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = value + excluded.value",
                   (key, n))

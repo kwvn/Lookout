@@ -288,7 +288,8 @@ class Demo(commands.Cog):
                                     "- Sent contact info to a teen · 1 time\n"
                                     "-# One sign never flags anyone · The first week is a test only admins see"),
             ("Keep Away After 2 Reports", "If 2 teens report User, their replies to teens get removed until the mods "
-                                          "press **Lift** or **Keep**."),
+                                          "press **Lift** or **Keep**.\n-# Teens who joined this week or have a new "
+                                          "account don't count."),
             ("Reported From a DM · #16", "**A teen reported a DM User sent them.**\n"
                                          "It came straight from Discord, so the mods know it's real."),
             footer="This is a demo with made-up names.", buttons=_nav(5))
