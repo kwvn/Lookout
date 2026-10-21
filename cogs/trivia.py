@@ -284,7 +284,7 @@ def results_view(game: Game) -> discord.ui.LayoutView:
     if top:
         text = _ranked(top)
     else:
-        text = "Nobody got any right this time. Next round!" if players else "Nobody played this time."
+        text = "Nobody got any questions right this time." if players else "Nobody played this time."
     total = len(game.questions)
     played = _count(total, "question") if game.number == total else f"Ended early · {game.number} of {total} questions"
     # the questions get deleted as it goes, so the answers end up here

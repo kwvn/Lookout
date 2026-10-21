@@ -452,7 +452,7 @@ class Reports(commands.Cog):
                     self.cases[key] = case
                 db.create_case(guild.id, case.message.id, case.message.channel.id, case.case_no, kind,
                                channel.id if channel else None, case.target_id, "; ".join(case.reasons),
-                               " ".join(m["jump"] for m in case.messages) or None)
+                               " ".join(m["jump"] for m in case.messages) or None, self._urgent(case))
             else:
                 ui_kit.insert_above_actions(ui_kit.action_box(view), ui_kit.staff_notes(fresh))
                 try:
@@ -460,6 +460,7 @@ class Reports(commands.Cog):
                 except discord.HTTPException:
                     log.warning("Couldn't update the alert for case %s", case.case_no, exc_info=True)
                 db.update_case(case.message.id, target_id=case.target_id, summary="; ".join(case.reasons),
+                               urgent=int(self._urgent(case)),
                                **({"evidence": " ".join(m["jump"] for m in case.messages)} if case.messages else {}))
             db.add_reporter(case.message.id, reporter.id)
         if by_mod and case.message:
@@ -588,9 +589,13 @@ class Reports(commands.Cog):
                         shot = discord.Attachment(data=raw, state=interaction._state)
             await self.submit(interaction, category, details, member, shot)
 
+    @staticmethod
+    def _urgent(case) -> bool:
+        return any(r.startswith(u) for r in case.reasons for u in URGENT)
+
     def _card(self, guild, s, channel, voice, case, streamers, cameras):
         target = guild.get_member(case.target_id) if case.target_id else None
-        urgent = any(r.startswith(u) for r in case.reasons for u in URGENT)
+        urgent = self._urgent(case)
         minor = any(r.startswith("Minor safety") for r in case.reasons)
 
         who = []
@@ -642,7 +647,7 @@ class Reports(commands.Cog):
         return ui_kit.alert(
             ui_kit.titled("voice" if voice else "report", title + (f" · #{case.case_no}" if case.case_no else "")),
             f"{channel.mention if channel else 'Reported from a DM'} · Reported <t:{int(case.started)}:R>"
-            + (f" · <@&{s.staff_role_id}>" if s.staff_role_id else ""),
+            + (f" · <@&{s.staff_role_id}>" if s.staff_role_id and urgent else ""),
             status,
             [("member", "Who", "\n".join(who)), ("report", "What Happened", what),
              ("cases", "Reported Message", reported), ("voice" if voice else "cases", "Where", where)],

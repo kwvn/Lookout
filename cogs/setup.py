@@ -175,8 +175,8 @@ def staff_page(guild, s: db.GuildSettings):
                                  default_values=[discord.Object(s.staff_role_id)] if s.staff_role_id else [])
     return _card(guild, "Mods", "Where alerts go and who handles them",
                  ("Mod Channel", ["-# The private channel where Lookout sends every alert.", channel]),
-                 ("Mod Role", ["-# Gets pinged for alerts and can use the alert buttons.", role]),
-                 ("Claim Reminder", ["-# If nobody claims an alert, Lookout pings the mods one more time.",
+                 ("Mod Role", ["-# Gets pinged for urgent alerts and can use the alert buttons.", role]),
+                 ("Claim Reminder", ["-# If nobody claims an urgent alert, Lookout pings the mods one more time.",
                                      _select("reminder", REMINDERS, s.reminder_minutes, "Claim reminder")]),
                  buttons=[_button("Back", "page", "home")])
 
@@ -193,7 +193,7 @@ def teen_page(guild, s: db.GuildSettings):
                  "\n-# Teen safety stays off until you pick at least one teen role.")
     mode = s.risk_now()
     risk = discord.ui.Section(
-        f"**Warning Signs**\n-# Adds up inappropriate messages, contact info and teen reports over 30 days. "
+        f"**Warning Signs**\n-# Adds up red flags in what adults say to teens, and teen reports, over 30 days. "
         f"{_risk_text(s)}.",
         accessory=_button({"off": "Start Test", "test": "Turn On Now", "on": "Turn Off"}[mode], "risk",
                           {"off": "test", "test": "on", "on": "off"}[mode]))
@@ -388,9 +388,11 @@ def risk_page(guild, s: db.GuildSettings):
             + (" · test mode, the mods weren't told" if f["test"] else "") for f in db.risk_flags(guild.id)]
     return _card(guild, "Warning Signs", _risk_text(s),
                  ("Flagged in the Last 30 Days", "\n".join(rows) or "Nobody yet."),
-                 ("How It Works", "Lookout adds up three things over 30 days: inappropriate messages to teens, "
-                                  "contact info sent to teens, and reports from teens. Normal chat never counts. One "
-                                  "sign never flags anyone. A case only opens when several add up."),
+                 ("How It Works", "Lookout adds these up over 30 days: inappropriate messages to teens, contact "
+                                  "info sent to teens, reports from teens, and adults asking a teen's age, school or "
+                                  "where they live, or asking them to move to DMs, another app or a call. Those last "
+                                  "two are never removed and can't flag anyone by themselves. Normal chat never "
+                                  "counts. One sign never flags anyone. A case only opens when several add up."),
                  buttons=[_button("Back", "page", "teen")])
 
 
@@ -683,7 +685,7 @@ class Setup(commands.Cog):
             # reading onboarding is an api call, defer first
             await interaction.response.defer()
             results = await safety_checkup(guild, s)
-            s.checkup_score, s.checkup_at = sum(ok for _, ok, _ in results), time.time()
+            s.checkup_score = sum(ok for _, ok, _ in results)
             db.save_settings(s)
             view = checkup_page(guild, s, results)
             return await interaction.edit_original_response(view=view, attachments=ui_kit.files(view),

@@ -105,7 +105,7 @@ _conn.executescript(
     DROP TABLE IF EXISTS trust;
     DROP TABLE IF EXISTS age_seen;
     DROP TABLE IF EXISTS teen_photos;
-    DELETE FROM teen_signals WHERE kind NOT IN ('flirty', 'contact', 'teen_report');
+    DELETE FROM teen_signals WHERE kind NOT IN ('flirty', 'contact', 'teen_report', 'probe', 'private');
     """
 )
 _conn.execute("INSERT OR IGNORE INTO totals VALUES ('since', ?)", (int(time.time()),))
@@ -134,7 +134,7 @@ _ALERT_COLS = {"case_no": "INTEGER", "kind": "TEXT", "channel_id": "INTEGER", "s
                "target_id": "INTEGER", "summary": "TEXT", "status": "TEXT DEFAULT 'open'",
                "resolved_by": "INTEGER", "resolved_at": "REAL", "note": "TEXT", "review_url": "TEXT",
                "screenshot_url": "TEXT", "claimed_at": "REAL", "reminded_at": "REAL",
-               "evidence": "TEXT", "target_left_at": "REAL"}
+               "evidence": "TEXT", "target_left_at": "REAL", "urgent": "INTEGER DEFAULT 0"}
 _have = {r[1] for r in _conn.execute("PRAGMA table_info(alerts)")}
 for _col, _type in _ALERT_COLS.items():
     if _col not in _have:
@@ -177,7 +177,6 @@ class GuildSettings:
     tips_channel_id: int | None = None   # where the safety tips were last posted
     flirty_filter: bool = True  # message filter
     checkup_score: int | None = None     # how many Safety Checkup items passed last time
-    checkup_at: float | None = None
     filter_languages: str = "en"         # the Message Filter's languages, like "en,es"
     age_check: bool = True               # age mismatch
     adult_channel_id: int | None = None  # where the 18+ button was posted
@@ -215,7 +214,7 @@ _COLS = ("staff_channel_id", "staff_role_id", "image_scan", "weekly_summary", "r
          "appeals", "report_updates", "panel_channel_id", "young_roles", "older_roles", "adult_roles",
          "no_age_role", "contact_filter", "teen_restrict", "risk_mode", "risk_test_until", "tips_dm",
          "selfie_guard", "nick_check", "alt_catcher", "tips_channel_id", "flirty_filter", "checkup_score",
-         "checkup_at", "filter_languages", "age_check", "adult_channel_id", "trivia_channel_id", "network")
+         "filter_languages", "age_check", "adult_channel_id", "trivia_channel_id", "network")
 _BOOLS = ("image_scan", "weekly_summary", "appeals", "report_updates", "contact_filter", "teen_restrict",
           "tips_dm", "selfie_guard", "nick_check", "alt_catcher", "flirty_filter", "age_check", "network")
 
@@ -334,7 +333,7 @@ def due_reminders(now: float) -> list[dict]:
     rows = _conn.execute(
         "SELECT a.message_id, a.guild_id, a.staff_channel_id, a.case_no, a.created_at, g.staff_role_id"
         " FROM alerts a JOIN guilds g ON g.guild_id = a.guild_id"
-        " WHERE a.kind IN ('voice', 'report', 'teen', 'risk') AND a.case_no IS NOT NULL AND a.status='open' AND a.claimed_by IS NULL"
+        " WHERE a.urgent=1 AND a.case_no IS NOT NULL AND a.status='open' AND a.claimed_by IS NULL"
         " AND a.reminded_at IS NULL AND g.reminder_minutes > 0 AND a.created_at <= ? - g.reminder_minutes * 60",
         (now,)).fetchall()
     keys = ("message_id", "guild_id", "staff_channel_id", "case_no", "created_at", "staff_role_id")
@@ -368,16 +367,18 @@ def next_case_no(guild_id: int) -> int:
     return _conn.execute("SELECT last_case FROM guilds WHERE guild_id=?", (guild_id,)).fetchone()[0]
 
 
+# urgent cases are the only ones that ping the mods, and the only ones the claim reminder pings for again
 def create_case(guild_id: int, message_id: int, staff_channel_id: int, case_no: int, kind: str,
-                channel_id: int | None, target_id: int | None, summary: str, evidence: str | None = None) -> None:
+                channel_id: int | None, target_id: int | None, summary: str, evidence: str | None = None,
+                urgent: bool = False) -> None:
     _conn.execute(
         "INSERT INTO alerts (message_id, guild_id, created_at, case_no, kind, channel_id, staff_channel_id,"
-        " target_id, summary, status, evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)"
+        " target_id, summary, status, evidence, urgent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)"
         " ON CONFLICT(message_id) DO UPDATE SET case_no=excluded.case_no, kind=excluded.kind,"
         " channel_id=excluded.channel_id, staff_channel_id=excluded.staff_channel_id,"
-        " target_id=excluded.target_id, summary=excluded.summary, evidence=excluded.evidence",
+        " target_id=excluded.target_id, summary=excluded.summary, evidence=excluded.evidence, urgent=excluded.urgent",
         (message_id, guild_id, time.time(), case_no, kind, channel_id, staff_channel_id, target_id, summary[:300],
-         evidence),
+         evidence, int(urgent)),
     )
     _conn.commit()
 

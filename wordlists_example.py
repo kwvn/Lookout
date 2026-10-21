@@ -13,8 +13,13 @@ IP = re.compile(r"\d{1,3}(?:\.\d{1,3}){3}")
 EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+\.[a-z]{2,}\b", re.I)
 
 # message filter
-EN_SEVERE = re.compile(r"\b(?:wanna|let'?s) meet (?:up )?after school\b", re.I)
+THREAT = re.compile(r"\bi'?ll (?:post|leak) (?:your|ur) (?:pics|nudes)\b", re.I)  # checked for everyone
+EN_SEVERE = re.compile(r"\b(?:wanna|let'?s) meet (?:up )?after school\b|" + THREAT.pattern, re.I)
 EN_INAPPROPRIATE = re.compile(r"\bdon'?t tell (?:your|ur) parents\b|\b(?:are|r) (?:you|u) home alone\b", re.I)
+
+# warning signs only, never removed
+PROBE = re.compile(r"\bhow old (?:are|r) (?:you|u)\b|\bwhere (?:do|d) (?:you|u) live\b", re.I)
+PRIVATE = re.compile(r"\b(?:check|open) (?:your|ur) dms\b|\bmove (?:this|it) to snap\b", re.I)
 
 # spelling tricks
 LOOKALIKES = str.maketrans({"а": "a", "е": "e", "о": "o"})  # cyrillic

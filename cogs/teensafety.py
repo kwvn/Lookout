@@ -68,11 +68,13 @@ SAYS_AGE = re.compile(
     rf"|\bi (?:just )?turned\s+(\d{{1,2}}){_AGE_END}"
     r"|^[ \t]*age[ \t]*[:=\-][ \t]*(\d{1,2})\b", re.I | re.M)
 
-# kind: (points, max points, label)
+# kind: (points, max points, label). probe and private can only reach 6 together, so they never flag anyone alone
 WEIGHTS = {
     "flirty": (3, 9, "Sent an inappropriate message to a teen"),
     "contact": (3, 6, "Sent contact info to a teen"),
     "teen_report": (3, 6, "Reported by a teen"),
+    "probe": (2, 3, "Asked a teen their age, school or where they live"),
+    "private": (2, 3, "Asked a teen to move to DMs, another app or a call"),
 }
 
 
@@ -142,6 +144,20 @@ def check_text(text: str, langs=("en",)) -> tuple[str | None, str | None, str | 
 
 def flirty_kind(text: str, langs=("en",)) -> str | None:
     return check_text(text, langs)[0]
+
+
+# threatening to share someone's pictures. older wordlists.py files don't have it
+def has_threat(text: str) -> bool:
+    threat = getattr(wordlists, "THREAT", None)
+    return bool(threat) and any(threat.search(v) for v in variants(text))
+
+
+# "probe" (age, school, where they live) or "private" (dms, other apps, calls). warning signs only
+def soft_sign(text: str) -> str | None:
+    for kind, rx in (("probe", getattr(wordlists, "PROBE", None)), ("private", getattr(wordlists, "PRIVATE", None))):
+        if rx and any(rx.search(v) for v in variants(text)):
+            return kind
+    return None
 
 
 # a teen reporting twice counts once, same for a burst of messages on one case
@@ -314,6 +330,10 @@ class TeenSafety(commands.Cog):
         if age:
             self._background(self._check_age(message, author, age, s))
 
+        # sextortion usually comes from someone pretending to be a teen, so this one isn't only for adults
+        if mine != ADULT and s.flirty_filter and has_threat(text):
+            return await self._threat(message, author, s)
+
         if mine == TEEN:
             if s.contact_filter and has_contact(text, own=True):
                 if await self._remove(message, f"Your message in {message.channel.mention} had contact info in it, so "
@@ -326,7 +346,8 @@ class TeenSafety(commands.Cog):
         kind, read_as, lang = check_text(text, s.languages) if s.flirty_filter else (None, None, None)
         contact = s.contact_filter and has_contact(text)
         restricted = db.restricted(message.guild.id, author.id)
-        if not (kind or contact or restricted):
+        soft = None if kind or contact or restricted else soft_sign(text)
+        if not (kind or contact or restricted or soft):
             return  # nothing to do
         teens = await self._teens_reached(message, s)
         nearby = not teens and bool(kind or contact)
@@ -337,6 +358,11 @@ class TeenSafety(commands.Cog):
 
         guild = message.guild
         where = message.channel.mention
+        if soft:  # nothing gets removed, it only adds to Warning Signs. once a day per teen
+            if self._once(("soft", guild.id, author.id, teens[0].id, soft), 86400):
+                db.add_signal(guild.id, author.id, soft, teens[0].id, f"{message.channel.id}:{message.id}")
+                await self._check_risk(guild, author, s)
+            return
         if kind:
             if contact:
                 db.add_signal(guild.id, author.id, "contact", teens[0].id)
@@ -344,13 +370,14 @@ class TeenSafety(commands.Cog):
             removed = await self._remove(message, f"Your {'reply' if message.reference else 'message'} to a member "
                                                   f"under 18 in {where} was removed. Inappropriate messages to teens "
                                                   "aren't allowed here, and the mods have been told.")
-            await self._flirty_alert(message, author, teens[0], kind, read_as, removed, s, lang)
+            threat = has_threat(text)
+            await self._flirty_alert(message, author, teens[0], kind, read_as, removed, s, lang, threat)
             if removed:  # only DM the teen if it actually got deleted
                 db.bump("removed")
                 if not nearby:
                     self._share(message, author, teens[0], s)
                 for teen in teens:
-                    await self._heads_up(message, author, teen)
+                    await self._heads_up(message, author, teen, threat)
         elif restricted and not nearby:
             await self._remove(message, f"Your message in {where} was removed. You can't reply to or mention "
                                         "members under 18 here until the mods review a report about you.")
@@ -429,7 +456,8 @@ class TeenSafety(commands.Cog):
     # repeats go on the same case, signals use the first message id
     # so False Alarm can undo all of them
     async def _flirty_alert(self, message: discord.Message, adult: discord.Member, teen: discord.Member, kind: str,
-                            read_as: str | None, removed: bool, s: db.GuildSettings, lang: str | None = "en") -> None:
+                            read_as: str | None, removed: bool, s: db.GuildSettings, lang: str | None = "en",
+                            threat: bool = False) -> None:
         guild = message.guild
         ref = message.reference.resolved if message.reference else None
         jump = ref.jump_url if isinstance(ref, discord.Message) else message.channel.jump_url
@@ -455,40 +483,76 @@ class TeenSafety(commands.Cog):
             done = f"**Spelled to get past filters.** Lookout read it as {_hidden(read_as, 300)}\n-# " + done
         buttons = action_buttons(guild.id, message.channel.id, adult.id)
         buttons.insert(2, self._btn("False Alarm", "falsealarm", adult.id, message.id))
+        what = (f"Threatened to share pictures of <@{teen.id}> (under 18). This is how sextortion starts." if threat
+                else f"Sent an inappropriate message to <@{teen.id}> (under 18).")
         alert_id = await self._case(
-            guild, s, adult.id, "teen", "Inappropriate Message", [
+            guild, s, adult.id, "teen", "Threat to Share Pictures" if threat else "Inappropriate Message", [
                 ("member", "Who", ui_kit.member_line(adult)),
-                ("report", "What Happened", f"Sent an inappropriate message to <@{teen.id}> (under 18)."
+                ("report", "What Happened", what
                                             + (f" **{wordlists.NAMES[lang]}.**" if lang and lang != "en" else "") + "\n"
                                             f"{_hidden(message.content)}\n-# {done}"),
                 ("cases", "Where", f"{message.channel.mention} · [Jump to Conversation]({jump})"),
             ], footer="False Alarm closes the case and takes it off their Warning Signs.",
-            buttons=buttons, urgent=kind == "severe", ping=True, thumbnail=adult.display_avatar.url,
+            buttons=buttons, urgent=kind == "severe", thumbnail=adult.display_avatar.url,
             evidence=jump, summary=f"Inappropriate message to a member under 18: {(message.content or '')[:150]}")
         if alert_id:
             self._flirty_cases[key] = (alert_id, now, message.id, 1)
             db.bump("filter_alerts")
 
-    async def _heads_up(self, message: discord.Message, adult: discord.Member, teen: discord.Member) -> None:
+    async def _heads_up(self, message: discord.Message, adult: discord.Member, teen: discord.Member,
+                        threat: bool = False) -> None:
         if not self._once(("headsup", message.guild.id, adult.id, teen.id)):
             return
-        how = "replied to you" if message.reference else "mentioned you"
+        how = ("replied to you" if message.reference else "mentioned you" if teen in message.mentions
+               else "wrote to you right after you talked")
         add_app = ui_kit.add_app_button()
-        view = ui_kit.card(
-            ui_kit.titled("warning", "A Message to You Was Removed"),
-            f"**@{discord.utils.escape_markdown(adult.name)}** {how} in {message.channel.mention} with something that "
-            "wasn't okay, so Lookout removed it. The mods know about it.",
-            ("Good to Know", "**You didn't do anything wrong.** You don't have to reply, and it's okay to block them.\n"
-                             "-# Want to add something? Press **Tell the Mods**. They won't say it was you."),
-            ("If They DM You", "You can report that to the mods too. Add Lookout to your apps, then right-click the "
-                               "message > **Apps** > **Report Message to Mods**.") if add_app else None,
-            subtitle=f"From {discord.utils.escape_markdown(message.guild.name)}",
-            buttons=[self._btn("Tell the Mods", "tellmore", message.guild.id, adult.id), ui_kit.block_button()]
-            + ([add_app] if add_app else []))
+        name = discord.utils.escape_markdown(adult.name)
+        if threat:
+            view = ui_kit.card(
+                ui_kit.titled("warning", "A Threat to You Was Removed"),
+                f"**@{name}** {how} in {message.channel.mention} with a threat about your pictures, so Lookout "
+                "removed it. The mods know about it.",
+                ("Good to Know", "**You're not in trouble.** Don't pay and don't send anything else. Paying almost "
+                                 "never makes it stop."),
+                ("Get Help", "Press **Someone's Threatening Me** to see what to do next. Talking to an adult you trust "
+                             "helps too."),
+                subtitle=f"From {discord.utils.escape_markdown(message.guild.name)}",
+                buttons=[self._btn("Tell the Mods", "tellmore", message.guild.id, adult.id),
+                         discord.ui.Button(label="Someone's Threatening Me", custom_id="lkhelp:threat"),
+                         ui_kit.block_button()])
+        else:
+            view = ui_kit.card(
+                ui_kit.titled("warning", "A Message to You Was Removed"),
+                f"**@{name}** {how} in {message.channel.mention} with something that wasn't okay, so Lookout removed "
+                "it. The mods know about it.",
+                ("Good to Know", "**You didn't do anything wrong.** You don't have to reply, and it's okay to block "
+                                 "them.\n-# Want to add something? Press **Tell the Mods**. They won't say it was you."),
+                ("If They DM You", "You can report that to the mods too. Add Lookout to your apps, then right-click the "
+                                   "message > **Apps** > **Report Message to Mods**.") if add_app else None,
+                subtitle=f"From {discord.utils.escape_markdown(message.guild.name)}",
+                buttons=[self._btn("Tell the Mods", "tellmore", message.guild.id, adult.id), ui_kit.block_button()]
+                + ([add_app] if add_app else []))
         try:
             await teen.send(view=view, allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException:
             pass
+
+    # a threat to share a teen's pictures from someone who isn't an adult here (adults go through on_message)
+    async def _threat(self, message: discord.Message, author: discord.Member, s: db.GuildSettings) -> None:
+        teens = await self._teens_reached(message, s) or await self._teen_nearby(message, s)
+        if not teens:
+            return
+        guild = message.guild
+        db.log(guild.id, author.id, "teen_flirty", (message.content or "")[:200], message.channel.id,
+               message_id=message.id)
+        removed = await self._remove(message, f"Your message in {message.channel.mention} was removed. Threatening to "
+                                              "share someone's pictures isn't allowed here, and the mods have been told.")
+        await self._flirty_alert(message, author, teens[0], "severe", None, removed, s, threat=True)
+        if removed:
+            db.bump("removed")
+            for teen in teens:
+                await self._heads_up(message, author, teen, threat=True)
+        await self._check_risk(guild, author, s)
 
     # keep away after 2 reports
 
@@ -533,9 +597,15 @@ class TeenSafety(commands.Cog):
         db.set_risk_flag(guild.id, member.id, points, test)
         if test:
             return  # test mode: only shows up in /setup
+        # those messages stay up, so the mods can read them where they were said
+        said = {"probe": "Asked a teen's age, school or where they live", "private": "Asked a teen to talk in private"}
+        links = [f"- {said[sig['kind']]} · <#{ch}> · [Jump to It](https://discord.com/channels/{guild.id}/{ch}/{mid})"
+                 for sig in db.signals(guild.id, member.id) if sig["kind"] in said
+                 for ch, _, mid in [(sig["detail"] or "").partition(":")] if ch.isdigit() and mid.isdigit()]
         await self._case(guild, s, member.id, "risk", "Warning Signs", [
             ("member", "Who", ui_kit.member_line(member)),
             ("warning", "Warning Signs, Last 30 Days", "\n".join(f"- {r}" for r in reasons)),
+            ("cases", "Where to Look", "\n".join(links[-5:])),  # skipped when empty
         ], footer="One sign never flags anyone. Several added up, so take a look before acting.",
            buttons=action_buttons(guild.id, None, member.id))
 
@@ -553,7 +623,8 @@ class TeenSafety(commands.Cog):
             buttons=buttons, thumbnail=thumbnail, footer=footer)
         msg = await self.bot.alert_staff(guild, view)
         if msg:
-            db.create_case(guild.id, msg.id, msg.channel.id, case_no, kind, None, target_id, summary or title, evidence)
+            db.create_case(guild.id, msg.id, msg.channel.id, case_no, kind, None, target_id, summary or title, evidence,
+                           urgent)
             return msg.id
         return None
 

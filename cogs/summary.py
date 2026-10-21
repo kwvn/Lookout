@@ -230,7 +230,7 @@ class Summary(commands.Cog):
             log.warning("Couldn't run the Safety Checkup in server %s", guild.id, exc_info=True)
             return
         passed, before = sum(ok for _, ok, _ in results), s.checkup_score
-        s.checkup_score, s.checkup_at = passed, time.time()
+        s.checkup_score = passed
         db.save_settings(s)
         channel = guild.get_channel(s.staff_channel_id)
         if before is None or passed >= before or channel is None:
