@@ -108,10 +108,23 @@ def _banner_name(title: str) -> str:
     return "banner-" + (re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "lookout") + ".png"
 
 
+# a subtitle as plain text for the banner. None if it has mentions, links, more lines or is too long
+def _plain(text: str) -> str | None:
+    text = re.sub(r"<a?:\w+:\d+>", "", text)  # custom emojis
+    if "\n" in text or re.search(r"<[@#t/]|\]\(", text):
+        return None
+    text = re.sub(r"\\([*_~`|>\\])", r"\1", text.replace("**", "").replace("__", ""))
+    text = tidy(" ".join(text.removeprefix("-#").split()))
+    return text if text and chart.line_fits(text) else None
+
+
 # banner picture if there's an icon (send files(view) with it), otherwise a # title
-# line: plain text drawn into the banner, the subtitle only shows if the banner can't be drawn
+# the subtitle goes in the banner when it's plain enough, otherwise under it. line: drawn in the banner instead,
+# the subtitle then only shows if the banner can't be drawn
 def head(view: ui.LayoutView, title: str, subtitle: str | None = None, icon: str | None = None,
          thumbnail: str | None = None, banner: bool = True, line: str | None = None) -> None:
+    if line is None and subtitle and icon and banner:
+        line = _plain(subtitle)
     data = chart.banner(icon, title, line) if icon and banner else None
     if data:
         name = _banner_name(title)

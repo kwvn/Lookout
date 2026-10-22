@@ -301,6 +301,14 @@ def _glyph(path: Path, size: int) -> Image.Image:
     return out
 
 
+LINE_ROOM = W - 182 - 230  # banner line width, between the title's left edge and looky
+
+
+# true if a banner line fits without getting too small to read
+def line_fits(text: str) -> bool:
+    return _font(REGULAR, 26 * S).getlength(text) / S <= LINE_ROOM
+
+
 # icon, LOOKOUT, the title, an optional line under it (like the server and what needs fixing), looky on the right
 # None if the icon is missing or the font can't draw the title
 @lru_cache(maxsize=64)
@@ -317,7 +325,7 @@ def banner(icon: str, title: str, line: str | None = None) -> bytes | None:
     if looky.exists():  # peeking up from the bottom edge
         pic = Image.open(looky).convert("RGBA").resize((168 * S, 168 * S), Image.LANCZOS)
         c.img.paste(pic, ((W - 204) * S, 26 * S), pic)
-    x, room = 182, W - 182 - 230
+    x, room = 182, LINE_ROOM
     top = 26 if line else 44
     for ch in "LOOKOUT":
         c.text(x, top, ch, BOLD, 23, MINT)

@@ -203,8 +203,15 @@ def home(guild: discord.Guild, s: db.GuildSettings, note: str | None = None):
                               ("Trivia", trivia or "Not set")], _button("Open", "page", "extras"))
 
     broken = bool(mods) and not ok  # missing permissions, or ones lookout doesn't need
-    fix = sum((not mods, not s.teen_safety, broken, bool(left)))
-    status = f"{fix} thing{'' if fix == 1 else 's'} to fix" if fix else "Everything's working"
+    # name the sections, a count read like the Safety Checkup's own number
+    fix = [name for name, bad in (("Mods", not mods), ("Teen Safety", not s.teen_safety), ("Permissions", broken),
+                                  ("Safety Checkup", bool(left))) if bad]
+    if not fix:
+        status = "Everything's working"
+    elif len(fix) == 1:
+        status = f"{fix[0]} needs a fix"
+    else:
+        status = f"{', '.join(fix[:-1])} and {fix[-1]} need a fix"
     return _card(guild, "Settings", status,
                  [staff, teen, reports, f"### Permissions\n{perms}", checkup, extra], footer=note)
 
