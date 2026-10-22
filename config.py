@@ -43,6 +43,8 @@ PRIVACY_URL = "https://mammoth-elbow-750.notion.site/Lookout-Privacy-Policy-cbc2
 SUPPORT_GUILD_ID = _int("SUPPORT_GUILD_ID", 0)
 
 DB_PATH = BASE_DIR / "lookout.db"
+# encrypts the text saved in the database, see vault.py. made and added to .env on the first start
+DATA_KEY = os.getenv("DATA_KEY", "").strip()
 ASSETS = BASE_DIR / "assets"
 
 

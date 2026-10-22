@@ -3,8 +3,10 @@ import time
 from dataclasses import dataclass
 
 import config
+from vault import PREFIX, seal, unseal
 
 _conn = sqlite3.connect(config.DB_PATH, check_same_thread=False)
+_conn.execute("PRAGMA secure_delete = ON")  # deleted rows get wiped from the file, not just unlinked
 _conn.executescript(
     """
     CREATE TABLE IF NOT EXISTS events (
@@ -149,6 +151,19 @@ if "message_id" not in {r[1] for r in _conn.execute("PRAGMA table_info(events)")
     _conn.execute("ALTER TABLE events ADD COLUMN message_id INTEGER")
 _conn.commit()
 
+# text saved before encryption gets encrypted once. then vacuum, so the old copies don't stay in the file
+_SEALED = (("events", "id", "detail"), ("alerts", "message_id", "summary"), ("alerts", "message_id", "note"),
+           ("alert_actions", "rowid", "text"), ("network_catches", "rowid", "text"), ("nick_tips", "rowid", "nick"))
+_old = 0
+for _table, _key, _col in _SEALED:
+    _rows = _conn.execute(f"SELECT {_key}, {_col} FROM {_table} WHERE {_col} != '' AND {_col} NOT LIKE ?",
+                          (PREFIX + "%",)).fetchall()
+    _conn.executemany(f"UPDATE {_table} SET {_col}=? WHERE {_key}=?", [(seal(v), k) for k, v in _rows])
+    _old += len(_rows)
+_conn.commit()
+if _old:
+    _conn.execute("VACUUM")
+
 FLAG_KINDS = ("vc_report", "image_flagged", "speech_flagged", "voicemsg_flagged")
 
 
@@ -262,7 +277,7 @@ def log(guild_id, user_id, kind, detail="", channel_id=None, actor_id=None, mess
     cur = _conn.execute(
         "INSERT INTO events (guild_id, user_id, actor_id, channel_id, kind, detail, created_at, message_id)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (guild_id, user_id, actor_id, channel_id, kind, detail[:1000], time.time(), message_id),
+        (guild_id, user_id, actor_id, channel_id, kind, seal(detail[:1000]), time.time(), message_id),
     )
     _conn.commit()
     return cur.lastrowid
@@ -271,7 +286,11 @@ def log(guild_id, user_id, kind, detail="", channel_id=None, actor_id=None, mess
 def get_event(guild_id: int, event_id: int) -> dict | None:
     row = _conn.execute("SELECT kind, user_id, actor_id, detail, created_at FROM events WHERE guild_id=? AND id=?",
                         (guild_id, event_id)).fetchone()
-    return dict(zip(("kind", "user_id", "actor_id", "detail", "created_at"), row)) if row else None
+    if not row:
+        return None
+    event = dict(zip(("kind", "user_id", "actor_id", "detail", "created_at"), row))
+    event["detail"] = unseal(event["detail"])
+    return event
 
 
 def count_flags(guild_id: int, user_id: int) -> int:
@@ -285,11 +304,12 @@ def count_kind(guild_id: int, user_id: int, kind: str) -> int:
 
 
 def history(guild_id: int, user_id: int, limit: int = 12) -> list[tuple]:
-    return _conn.execute(
+    rows = _conn.execute(
         "SELECT kind, detail, actor_id, channel_id, created_at, id FROM events"
         " WHERE guild_id=? AND user_id=? ORDER BY created_at DESC LIMIT ?",
         (guild_id, user_id, limit),
     ).fetchall()
+    return [(kind, unseal(detail), *rest) for kind, detail, *rest in rows]
 
 
 def purge_old() -> int:
@@ -348,12 +368,12 @@ def mark_reminded(message_id: int) -> None:
 
 
 def add_alert_action(message_id: int, text: str) -> None:
-    _conn.execute("INSERT INTO alert_actions VALUES (?, ?, ?)", (message_id, text[:300], time.time()))
+    _conn.execute("INSERT INTO alert_actions VALUES (?, ?, ?)", (message_id, seal(text[:300]), time.time()))
     _conn.commit()
 
 
 def alert_actions(message_id: int) -> list[str]:
-    return [r[0] for r in _conn.execute(
+    return [unseal(r[0]) for r in _conn.execute(
         "SELECT text FROM alert_actions WHERE message_id=? ORDER BY created_at", (message_id,)).fetchall()]
 
 
@@ -379,7 +399,7 @@ def create_case(guild_id: int, message_id: int, staff_channel_id: int, case_no: 
         " ON CONFLICT(message_id) DO UPDATE SET case_no=excluded.case_no, kind=excluded.kind,"
         " channel_id=excluded.channel_id, staff_channel_id=excluded.staff_channel_id,"
         " target_id=excluded.target_id, summary=excluded.summary, evidence=excluded.evidence, urgent=excluded.urgent",
-        (message_id, guild_id, time.time(), case_no, kind, channel_id, staff_channel_id, target_id, summary[:300],
+        (message_id, guild_id, time.time(), case_no, kind, channel_id, staff_channel_id, target_id, seal(summary[:300]),
          evidence, int(urgent)),
     )
     _conn.commit()
@@ -390,7 +410,11 @@ def case_by_message(message_id: int) -> dict | None:
                         " staff_channel_id, status FROM alerts WHERE message_id=?", (message_id,)).fetchone()
     keys = ("guild_id", "case_no", "kind", "target_id", "summary", "created_at", "evidence", "message_id",
             "staff_channel_id", "status")
-    return dict(zip(keys, row)) if row else None
+    if not row:
+        return None
+    case = dict(zip(keys, row))
+    case["summary"] = unseal(case["summary"])
+    return case
 
 
 def has_case(guild_id: int, user_id: int, kind: str) -> bool:
@@ -399,7 +423,7 @@ def has_case(guild_id: int, user_id: int, kind: str) -> bool:
 
 
 def update_case(message_id: int, **fields) -> None:
-    allowed = {k: v for k, v in fields.items() if k in _ALERT_COLS}
+    allowed = {k: seal(v) if k in ("summary", "note") else v for k, v in fields.items() if k in _ALERT_COLS}
     if allowed:
         _conn.execute(f"UPDATE alerts SET {', '.join(f'{k}=?' for k in allowed)} WHERE message_id=?",
                       (*allowed.values(), message_id))
@@ -423,7 +447,11 @@ _CASE_FIELDS = ("message_id", "case_no", "kind", "channel_id", "staff_channel_id
 
 
 def _case_row(row):
-    return dict(zip(_CASE_FIELDS, row)) if row else None
+    if not row:
+        return None
+    case = dict(zip(_CASE_FIELDS, row))
+    case["summary"], case["note"] = unseal(case["summary"]), unseal(case["note"])
+    return case
 
 
 def list_cases(guild_id: int, status: str = "all", member_id: int | None = None,
@@ -493,7 +521,7 @@ def week_stats(guild_id: int, start: float, end: float) -> dict:
             "SELECT created_at, detail FROM events WHERE guild_id=? AND created_at>=? AND created_at<?"
             " AND kind='vc_report'", span):
         daily[min(int((created_at - start) // 86400), days - 1)] += 1
-        label = (detail or "").split(":")[0].strip() or "Other"
+        label = (unseal(detail) or "").split(":")[0].strip() or "Other"
         types[label] = types.get(label, 0) + 1
 
     def top(query, *extra):
@@ -723,11 +751,11 @@ def first_nudge(guild_id: int, user_id: int) -> bool:
 
 def nick_tipped(guild_id: int, user_id: int, nick: str) -> bool:
     row = _conn.execute("SELECT nick FROM nick_tips WHERE guild_id=? AND user_id=?", (guild_id, user_id)).fetchone()
-    if row and row[0] == nick:
+    if row and unseal(row[0]) == nick:
         return True
     _conn.execute("INSERT INTO nick_tips VALUES (?, ?, ?, ?) ON CONFLICT(guild_id, user_id)"
                   " DO UPDATE SET nick=excluded.nick, created_at=excluded.created_at",
-                  (guild_id, user_id, nick, time.time()))
+                  (guild_id, user_id, seal(nick), time.time()))
     _conn.commit()
     return False
 
@@ -788,7 +816,7 @@ NETWORK_TEENS = 2       # with at least this many different teens
 
 def add_network_catch(guild_id: int, user_id: int, teen_id: int, message_id: int, text: str) -> None:
     _conn.execute("INSERT OR IGNORE INTO network_catches VALUES (?, ?, ?, ?, ?, ?)",
-                  (guild_id, user_id, teen_id, message_id, (text or "")[:200], time.time()))
+                  (guild_id, user_id, teen_id, message_id, seal((text or "")[:200]), time.time()))
     _conn.commit()
 
 
@@ -803,7 +831,8 @@ def network_record(user_id: int, skip_guild: int | None = None) -> dict:
                          " AND created_at>=? AND guild_id IS NOT ? ORDER BY created_at DESC",
                          (user_id, time.time() - NETWORK_DAYS * 86400, skip_guild)).fetchall()
     servers, teens = {r[0] for r in rows}, {r[1] for r in rows}
-    return {"catches": [dict(zip(("guild_id", "teen_id", "text", "created_at"), r)) for r in rows],
+    return {"catches": [{"guild_id": g, "teen_id": t, "text": unseal(text), "created_at": at}
+                        for g, t, text, at in rows],
             "servers": len(servers), "teens": len(teens),
             "listed": len(servers) >= NETWORK_SERVERS and len(teens) >= NETWORK_TEENS}
 
