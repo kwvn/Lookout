@@ -98,11 +98,32 @@ def _roles(s: db.GuildSettings, *fields: str) -> str:
     return " ".join(f"<@&{r}>" for r in sorted(ids)) if ids else "Not set"
 
 
+# one line of a page: **Title** · status, a small line under it, one button on the right
+def _row(title: str, status: str | None, text: str, button: discord.ui.Button) -> discord.ui.Section:
+    return discord.ui.Section(f"**{title}**" + (f" · {status}" if status else "") + f"\n-# {text}", accessory=button)
+
+
 def _toggle(s: db.GuildSettings, field: str) -> discord.ui.Section:
     title, text = TOGGLES[field]
     on = getattr(s, field)
-    return discord.ui.Section(f"**{title}**\n-# {text}",
-                              accessory=_button("Turn Off" if on else "Turn On", "toggle", field))
+    return _row(title, "On" if on else "Off", text, _button("Turn Off" if on else "Turn On", "toggle", field))
+
+
+# a channel mention, None if it isn't set or was deleted
+def _channel(guild, channel_id: int | None) -> str | None:
+    return f"<#{channel_id}>" if channel_id and guild.get_channel(channel_id) else None
+
+
+# rows in one box with thin lines between them. a row can be a list, like a text and its menu
+def _list(*rows) -> list:
+    body = []
+    for row in rows:
+        if not row:
+            continue
+        if body:
+            body.append(discord.ui.Separator())
+        body.extend(row if isinstance(row, list) else [row])
+    return body
 
 
 def _risk_text(s: db.GuildSettings) -> str:
@@ -119,53 +140,69 @@ def _select(field: str, choices: list, current, placeholder: str) -> discord.ui.
         for value, label in choices])
 
 
-def _card(guild, title: str, subtitle: str, *sections, buttons=None, footer=None):
-    return ui_kit.card(title, *sections, buttons=buttons, footer=footer, icon="settings",
-                       subtitle=f"{discord.utils.escape_markdown(guild.name)} · {subtitle}")
+# banner with the server and status drawn in, each box is a list of rows, nav buttons under the boxes
+def _card(guild, title: str, status: str, *boxes, nav=(), footer=None):
+    view = ui_kit.card(title, *(_list(*box) for box in boxes if box), footer=footer, icon="settings",
+                       subtitle=f"{discord.utils.escape_markdown(guild.name)} · {status}",
+                       line=f"{guild.name} · {status}")
+    if nav:
+        view.add_item(ui_kit.button_row(*nav))
+    return view
 
 
 # panel
 
 def home(guild: discord.Guild, s: db.GuildSettings, note: str | None = None):
-    reminder = dict(REMINDERS).get(s.reminder_minutes, f"One ping after {s.reminder_minutes} minutes")
-    staff = ui_kit.kv([
-        ("Mod Channel", f"<#{s.staff_channel_id}>" if s.staff_channel_id else "Not set"),
-        ("Mod Role", f"<@&{s.staff_role_id}>" if s.staff_role_id else "Anyone with Timeout Members"),
-        ("Claim Reminder", reminder),
-    ])
+    perms, ok = permission_report(guild, s)
+    mods = _channel(guild, s.staff_channel_id)
+    if mods:
+        role = f"<@&{s.staff_role_id}>" if s.staff_role_id else "anyone with Timeout Members"
+        staff = _row("Mods", "Set", f"Alerts go to {mods} · {role} handles them", _button("Edit", "page", "staff"))
+    else:
+        staff = _row("Mods", "Not set", "Pick the private channel where alerts go", _button("Set Up", "page", "staff"))
+
     on = sum(getattr(s, f) for f, _, _ in PROTECTIONS) + (s.risk_now() != "off")
     if s.teen_safety:
-        teen = ui_kit.kv([
-            ("Teens", "Everyone without an 18+ role (Teen by Default)") if s.teen_default else
-            ("Teen Roles", _roles(s, "young_roles", "older_roles")),
-            ("Adult Roles", _roles(s, "adult_roles")),
-            ("18+ Button", f"<#{s.adult_channel_id}>" if s.teen_default and s.adult_channel_id else None),
-            ("Protections", f"{on} of {len(PROTECTIONS) + 1} on · Warning Signs: {_risk_text(s).lower()}"),
-        ])
+        teens = ("Everyone without an 18+ role counts as a teen" if s.teen_default
+                 else f"Teen roles: {_roles(s, 'young_roles', 'older_roles')}")
+        teen = _row("Teen Safety", f"On, {on} of {len(PROTECTIONS) + 1} protections", teens,
+                    _button("Edit", "page", "teen"))
     else:
-        teen = "**Off.** Pick your teen roles in Teen Safety to turn it on."
-    reports = ui_kit.kv([
-        ("Report Button", f"Posted in <#{s.panel_channel_id}>" if s.panel_channel_id else "Not posted yet"),
-        ("Safety Tips", f"Posted in <#{s.tips_channel_id}>" if s.tips_channel_id else "Not posted yet"),
-        ("Reporter Updates", "On" if s.report_updates else "Off"),
-    ])
-    perms, ok = permission_report(guild, s)
-    if s.checkup_score is None:
-        checkup = "Check a few of your server's own Discord settings in one go."
-    elif s.checkup_score >= len(CHECKS):
-        checkup = f"**{len(CHECKS)} of {len(CHECKS)} done.** Your server's own settings look good."
+        teen = _row("Teen Safety", "Off", "Pick your age roles to turn on the filters", _button("Turn On", "page", "ages"))
+
+    panel, tips = _channel(guild, s.panel_channel_id), _channel(guild, s.tips_channel_id)
+    if panel:
+        reports = _row("Reports", "Posted", f"Report button in {panel}" + (f" · Safety tips in {tips}" if tips else ""),
+                       _button("Edit", "page", "reports"))
     else:
-        left = len(CHECKS) - s.checkup_score
-        checkup = (f"**{left} thing{'' if left == 1 else 's'} to fix.** A couple of your server's own settings "
-                   "could keep teens safer." if left > 1 else
-                   "**1 thing to fix.** One of your server's own settings could keep teens safer.")
-    status = "Setup needed" if not s.configured else "Everything's working" if ok else "Check permissions"
+        reports = _row("Reports", "Not posted", "The Report button isn't posted yet", _button("Post It", "page", "reports"))
+
+    left = None if s.checkup_score is None else max(0, len(CHECKS) - s.checkup_score)
+    if left is None:
+        checkup = _row("Safety Checkup", "Not run yet", "Checks a few of your server's own Discord settings",
+                       _button("Run It", "checkup"))
+    elif not left:
+        checkup = _row("Safety Checkup", "All good", "Your server's own settings look good",
+                       _button("Check Again", "checkup"))
+    else:
+        checkup = _row("Safety Checkup", f"{left} to fix", "One of your server's own settings could keep teens safer"
+                       if left == 1 else "A few of your server's own settings could keep teens safer",
+                       _button("Review", "checkup"))
+
+    extras = [name for name, on in (("image filter", s.image_scan), ("Lookout Network", s.network),
+                                    ("weekly summary", s.weekly_summary),
+                                    ("trivia", _channel(guild, s.trivia_channel_id))) if on]
+    text = ", ".join(extras) or "Image filter, Lookout Network, weekly summary, trivia"
+    extra = _row("Extras", f"{len(extras)} on" if extras else "All off", text[:1].upper() + text[1:],
+                 _button("Open", "page", "extras"))
+
+    broken = bool(mods) and not ok  # missing permissions, or ones lookout doesn't need
+    fix = sum((not mods, not s.teen_safety, broken, bool(left)))
+    status = f"{fix} thing{'' if fix == 1 else 's'} to fix" if fix else "Everything's working"
     return _card(guild, "Settings", status,
-                 ("Mods", staff), ("Teen Safety", teen), ("Reports", reports), ("Permissions", perms),
-                 ("Safety Checkup", [checkup, _button("Safety Checkup", "checkup")]),
-                 ("One Last Thing", note) if note else None,
-                 buttons=[_button("Mods", "page", "staff"), _button("Teen Safety", "page", "teen"),
-                          _button("Reports", "page", "reports"), _button("Extras", "page", "extras")])
+                 [f"**Permissions** · Needs a fix\n{perms}" if broken else None,
+                  staff, teen, reports, checkup, extra],
+                 footer=note or ("Lookout has every permission it needs" if ok else None))
 
 
 def staff_page(guild, s: db.GuildSettings):
@@ -175,38 +212,35 @@ def staff_page(guild, s: db.GuildSettings):
     role = discord.ui.RoleSelect(custom_id=f"{PREFIX}:set:staff_role", placeholder="Pick the mod role...",
                                  default_values=[discord.Object(s.staff_role_id)] if s.staff_role_id else [])
     return _card(guild, "Mods", "Where alerts go and who handles them",
-                 ("Mod Channel", ["-# The private channel where Lookout sends every alert.", channel]),
-                 ("Mod Role", ["-# Gets pinged for urgent alerts and can use the alert buttons.", role]),
-                 ("Claim Reminder", ["-# If nobody claims an urgent alert, Lookout pings the mods one more time.",
-                                     _select("reminder", REMINDERS, s.reminder_minutes, "Claim reminder")]),
-                 buttons=[_button("Back", "page", "home")])
+                 [["**Mod Channel**\n-# The private channel where Lookout sends every alert", channel],
+                  ["**Mod Role**\n-# Gets pinged for urgent alerts and can use the alert buttons", role],
+                  ["**Claim Reminder**\n-# If nobody claims an urgent alert, Lookout pings the mods one more time",
+                   _select("reminder", REMINDERS, s.reminder_minutes, "Claim reminder")]],
+                 nav=[_button("Back", "page", "home")])
 
 
 def teen_page(guild, s: db.GuildSettings):
     on = sum(getattr(s, f) for f, _, _ in PROTECTIONS) + (s.risk_now() != "off")
-    teens = ("Everyone without an 18+ role (Teen by Default)" if s.teen_default
-             else _roles(s, 'young_roles', 'older_roles'))
-    ages = f"**Teens:** {teens}\n**Adult Roles:** {_roles(s, 'adult_roles')}"
-    if s.teen_default and s.adult_channel_id:
-        ages += f"\n**18+ Button:** <#{s.adult_channel_id}>"
     if not s.teen_safety:
-        ages += ("\n-# Teen safety stays off until you pick your 18+ role." if s.teen_default else
-                 "\n-# Teen safety stays off until you pick at least one teen role.")
-    mode = s.risk_now()
-    risk = discord.ui.Section(
-        f"**Warning Signs**\n-# Adds up red flags in what adults say to teens, and teen reports, over 30 days. "
-        f"{_risk_text(s)}.",
-        accessory=_button({"off": "Start Test", "test": "Turn On Now", "on": "Turn Off"}[mode], "risk",
-                          {"off": "test", "test": "on", "on": "off"}[mode]))
-    protections = [_toggle(s, f) for f, _, _ in PROTECTIONS] + [risk]
-    if not guild.me.guild_permissions.manage_nicknames:
-        protections.append("-# Nickname Check can only fix a nickname for a teen if Lookout has **Manage Nicknames**.")
-    return _card(guild, "Teen Safety", f"{on} of {len(PROTECTIONS) + 1} on" if s.teen_safety else "Off",
-                 ("Age Roles", [discord.ui.Section(ages, accessory=_button(
-                     "Change" if s.teen_safety else "Pick Age Roles", "page", "ages"))]),
-                 ("Protections", protections),
-                 buttons=[_button("Back", "page", "home"), _button("Warning Signs", "page", "risk"),
-                          _button("Languages", "page", "langs")])
+        who = ("Teen safety stays off until you pick your 18+ role" if s.teen_default else
+               "Teen safety stays off until you pick at least one teen role")
+    elif s.teen_default:
+        who = f"Everyone without {_roles(s, 'adult_roles')} (Teen by Default)"
+        adult = _channel(guild, s.adult_channel_id)
+        if adult:
+            who += f" · 18+ button in {adult}"
+    else:
+        who = f"Teen roles: {_roles(s, 'young_roles', 'older_roles')} · Adult roles: {_roles(s, 'adult_roles')}"
+    ages = _row("Who Counts as a Teen", None, who,
+                _button("Change" if s.teen_safety else "Pick Age Roles", "page", "ages"))
+    risk = _row("Warning Signs", _risk_text(s), "Adds up red flags in what adults say to teens over 30 days",
+                _button("Open", "page", "risk"))
+    nicknames = guild.me.guild_permissions.manage_nicknames
+    return _card(guild, "Teen Safety", f"On, {on} of {len(PROTECTIONS) + 1} protections" if s.teen_safety else "Off",
+                 [ages, *(_toggle(s, f) for f, _, _ in PROTECTIONS), risk],
+                 footer=None if nicknames else "Nickname Check can only fix a nickname for a teen if Lookout has "
+                                               "**Manage Nicknames**.",
+                 nav=[_button("Back", "page", "home"), _button("Languages", "page", "langs")])
 
 
 # finding age roles
@@ -307,11 +341,10 @@ def languages_page(guild, s: db.GuildSettings):
                                  for code, name in wordlists.NAMES.items()])
     picked = ", ".join(wordlists.NAMES[c] for c in s.languages if c in wordlists.NAMES)
     return _card(guild, "Languages", f"Message Filter: {picked}",
-                 ("Message Filter Languages", ["Pick the languages people use here. Lookout checks messages to teens "
-                                               "in all of them, with the same spelling-trick cleanup.", menu,
-                                               "-# Each extra language adds a few false alarms, so only pick the ones "
-                                               "your server uses."]),
-                 buttons=[_button("Back", "page", "teen")])
+                 [["**Message Filter Languages**\n-# Pick the languages people use here. Lookout checks messages to "
+                   "teens in all of them, with the same spelling-trick cleanup.", menu,
+                   "-# Each extra language adds a few false alarms, so only pick the ones your server uses."]],
+                 nav=[_button("Back", "page", "teen")])
 
 
 def ages_page(guild, s: db.GuildSettings):
@@ -319,82 +352,84 @@ def ages_page(guild, s: db.GuildSettings):
         ids = set().union(s.role_ids(field), *(s.role_ids(f) for f in also))
         return discord.ui.RoleSelect(custom_id=f"{PREFIX}:set:{field}", placeholder=placeholder,
                                      min_values=0, max_values=10, default_values=[discord.Object(r) for r in ids])
-    mode = ("How Ages Work", ["-# Teen by Default protects everyone who doesn't have an 18+ role.",
-                              _select("age_mode", AGE_MODES, "tbd" if s.teen_default else "roles", "How ages work")])
+    mode = ["**How Ages Work**\n-# Teen by Default protects everyone who doesn't have an 18+ role",
+            _select("age_mode", AGE_MODES, "tbd" if s.teen_default else "roles", "How ages work")]
     if s.teen_default:
-        where = (f"**Posted in:** <#{s.adult_channel_id}> · {len(db.verified_adults(s.guild_id))} adults so far"
-                 if s.adult_channel_id else "**Not posted yet**")
+        adult = _channel(guild, s.adult_channel_id)
+        where = f"Posted in {adult} · {len(db.verified_adults(s.guild_id))} adults so far" if adult else "Not posted yet"
         post = discord.ui.ChannelSelect(custom_id=f"{PREFIX}:set:adult_button",
                                         channel_types=[discord.ChannelType.text],
                                         placeholder="Post it in an age-restricted channel...")
-        return _card(guild, "Age Roles", "Who Lookout treats as a teen", mode,
-                     ("Adult Roles", [roles("adult_roles", "Pick the 18+ roles..."), f"-# {ADULT_TIP}"]),
-                     ("Invisible 18+", [where + "\n-# No role at all. Adults press a button in an age-restricted "
-                                                "channel, and Lookout remembers them privately. Nobody can see who "
-                                                "pressed it.", post]),
-                     ("Wrong Age Roles", [_toggle(s, "age_check")]),
-                     buttons=[_button("Back", "page", "teen")])
+        return _card(guild, "Age Roles", "Who Lookout treats as a teen",
+                     [mode, [f"**Adult Roles**\n-# {ADULT_TIP}", roles("adult_roles", "Pick the 18+ roles...")],
+                      [f"**Invisible 18+** · {where}\n-# No role at all. Adults press a button in an age-restricted "
+                       "channel, and Lookout remembers them privately. Nobody can see who pressed it.", post],
+                      _toggle(s, "age_check")],
+                     nav=[_button("Back", "page", "teen")])
     no_role = [("adult", "Count them as 18+"), ("ignore", "Leave them out")]
-    return _card(guild, "Age Roles", "Who Lookout treats as a teen", mode,
-                 None if s.teen_safety else _found_box(guild, "found"),
-                 ("Teen Roles", ["-# Everyone under 18, like 13-15 and 16-17.",
-                                 roles("young_roles", "Pick the teen roles...", "older_roles")]),
-                 ("Adult Roles", [roles("adult_roles", "Pick the 18+ roles...")]),
-                 ("No Age Role", ["-# Members who haven't picked an age role.",
-                                  _select("no_age_role", no_role, s.no_age_role, "Members without an age role")]),
-                 ("Wrong Age Roles", [_toggle(s, "age_check")]),
-                 buttons=[_button("Back", "page", "teen")])
+    found = None if s.teen_safety else _found_box(guild, "found")
+    return _card(guild, "Age Roles", "Who Lookout treats as a teen",
+                 [[f"**{found[0]}**\n{found[1][0]}", found[1][1]] if found else None, mode,
+                  ["**Teen Roles**\n-# Everyone under 18, like 13-15 and 16-17",
+                   roles("young_roles", "Pick the teen roles...", "older_roles")],
+                  ["**Adult Roles**", roles("adult_roles", "Pick the 18+ roles...")],
+                  ["**No Age Role**\n-# Members who haven't picked an age role",
+                   _select("no_age_role", no_role, s.no_age_role, "Members without an age role")],
+                  _toggle(s, "age_check")],
+                 nav=[_button("Back", "page", "teen")])
 
 
 def reports_page(guild, s: db.GuildSettings):
-    where = f"**Posted in:** <#{s.panel_channel_id}>" if s.panel_channel_id else "**Not posted yet**"
+    panel, tips_channel = _channel(guild, s.panel_channel_id), _channel(guild, s.tips_channel_id)
     post = discord.ui.ChannelSelect(custom_id=f"{PREFIX}:set:post_panel", channel_types=[discord.ChannelType.text],
                                     placeholder="Post it in a channel...")
-    tips_where = f"**Posted in:** <#{s.tips_channel_id}>" if s.tips_channel_id else "**Not posted yet**"
     tips = discord.ui.ChannelSelect(custom_id=f"{PREFIX}:set:post_tips", channel_types=[discord.ChannelType.text],
                                     placeholder="Post it in a channel...")
     return _card(guild, "Reports", "How members report and what they hear back",
-                 ("Report Button", [where + "\n-# Members press it to report a problem without typing a command.",
-                                    post]),
-                 ("Safety Tips", [tips_where + "\n-# Safety tips for teens, with a Report a Problem button.", tips]),
-                 ("After a Report", [_toggle(s, "report_updates")]),
-                 buttons=[_button("Back", "page", "home")])
+                 [[f"**Report Button** · {f'Posted in {panel}' if panel else 'Not posted yet'}\n"
+                   "-# Members press it to report a problem without typing a command", post],
+                  [f"**Safety Tips** · {f'Posted in {tips_channel}' if tips_channel else 'Not posted yet'}\n"
+                   "-# Safety tips for teens, with a Report a Problem button", tips],
+                  _toggle(s, "report_updates")],
+                 nav=[_button("Back", "page", "home")])
 
 
 def extras_page(guild, s: db.GuildSettings):
-    trivia_where = f"**Channel:** <#{s.trivia_channel_id}>" if s.trivia_channel_id else "**Not set**"
+    where = _channel(guild, s.trivia_channel_id)
     trivia = discord.ui.ChannelSelect(custom_id=f"{PREFIX}:set:trivia_channel", channel_types=[discord.ChannelType.text],
                                       placeholder="Pick your general chat...",
-                                      default_values=[discord.Object(s.trivia_channel_id)] if s.trivia_channel_id else [])
+                                      default_values=[discord.Object(s.trivia_channel_id)] if where else [])
+    looky = "".join(ui_kit.ICONS.get(f"looky_{m}", "") for m in ("wave", "sus", "love", "watching"))
     return _card(guild, "Extras", "Other protections and reports for the mods",
-                 ("Images", [_toggle(s, "image_scan")]),
-                 ("Lookout Network", [_toggle(s, "network")]),
-                 ("For Mods", [_toggle(s, "weekly_summary")]),
-                 ("Trivia", [trivia_where + "\n-# Mods can host safety trivia games with /trivia, only in this channel.",
-                             trivia]),
-                 ("Meerkat Emojis", [discord.ui.Section(
-                     f"**Looky**\n-# Lookout's meerkat. Adds {MEERKATS} emojis your members can use. "
-                     + "".join(ui_kit.ICONS.get(f"looky_{m}", "") for m in ("wave", "sus", "love", "watching")),
-                     accessory=_button("Add Emojis", "emojis"))]),
-                 ("Your Data", f"**Cases and history:** kept {config.RETENTION_DAYS} days\n"
-                               f"**Warning signs:** kept {db.SIGNAL_DAYS} days\n"
-                               f"**Lookout Network:** kept {db.NETWORK_DAYS // 30} months\n"
-                               "-# Older records are deleted automatically. Everything except Lookout Network records "
-                               "is deleted if Lookout leaves the server."),
-                 buttons=[_button("Back", "page", "home")])
+                 [_toggle(s, "image_scan"), _toggle(s, "network"), _toggle(s, "weekly_summary"),
+                  [f"**Trivia** · {where or 'Not set'}\n-# Mods can host safety trivia games with /trivia, only in "
+                   "this channel", trivia],
+                  _row("Meerkat Emojis", None, f"Adds {MEERKATS} Looky emojis your members can use {looky}",
+                       _button("Add Emojis", "emojis")),
+                  f"**Your Data**\n-# Cases and history: kept {config.RETENTION_DAYS} days\n"
+                  f"-# Warning signs: kept {db.SIGNAL_DAYS} days\n"
+                  f"-# Lookout Network: kept {db.NETWORK_DAYS // 30} months\n"
+                  "-# Older records are deleted automatically. Everything except Lookout Network records is deleted "
+                  "if Lookout leaves the server."],
+                 nav=[_button("Back", "page", "home")])
 
 
 def risk_page(guild, s: db.GuildSettings):
+    mode = s.risk_now()
     rows = [f"<@{f['user_id']}> · {f['score']} points · <t:{int(f['flagged_at'])}:R>"
             + (" · test mode, the mods weren't told" if f["test"] else "") for f in db.risk_flags(guild.id)]
+    switch = _button({"off": "Start Test", "test": "Turn On Now", "on": "Turn Off"}[mode], "risk",
+                     {"off": "test", "test": "on", "on": "off"}[mode])
     return _card(guild, "Warning Signs", _risk_text(s),
-                 ("Flagged in the Last 30 Days", "\n".join(rows) or "Nobody yet."),
-                 ("How It Works", "Lookout adds these up over 30 days: inappropriate messages to teens, contact "
-                                  "info sent to teens, reports from teens, and adults asking a teen's age, school or "
-                                  "where they live, or asking them to move to DMs, another app or a call. Those last "
-                                  "two are never removed and can't flag anyone by themselves. Normal chat never "
-                                  "counts. One sign never flags anyone. A case only opens when several add up."),
-                 buttons=[_button("Back", "page", "teen")])
+                 [_row("Warning Signs", _risk_text(s), "Adds up red flags in what adults say to teens, and teen "
+                                                       "reports, over 30 days", switch),
+                  "**Flagged in the Last 30 Days**\n" + ("\n".join(rows) or "-# Nobody yet."),
+                  "**How It Works**\n-# Lookout adds these up over 30 days: inappropriate messages to teens, contact "
+                  "info sent to teens, reports from teens, and adults asking a teen's age, school or where they live, "
+                  "or asking them to move to DMs, another app or a call. Those last two are never removed and can't "
+                  "flag anyone by themselves. Normal chat never counts. One sign never flags anyone. A case only "
+                  "opens when several add up."],
+                 nav=[_button("Back", "page", "teen")])
 
 
 PAGES = {"home": home, "staff": staff_page, "teen": teen_page, "ages": ages_page, "reports": reports_page,
@@ -485,17 +520,16 @@ async def safety_checkup(guild: discord.Guild, s: db.GuildSettings) -> list[tupl
 
 def checkup_page(guild, s: db.GuildSettings, results: list[tuple[str, bool, str]]):
     passed = sum(ok for _, ok, _ in results)
-    fixes = [(name, f"**Needs a fix.** {text}") for name, ok, text in results if not ok]
-    good = ui_kit.kv([(name, text) for name, ok, text in results if ok])
+    fixes = [f"**{name}** · Needs a fix\n{text}" for name, ok, text in results if not ok]
+    good = "\n".join(f"**{name}** · Good\n-# {text}" for name, ok, text in results if ok)
+    status = f"{passed} of {len(results)} good" + (f" · {len(fixes)} to fix" if fixes else "")
     if not fixes:
-        return _card(guild, "Safety Checkup", f"{passed} of {len(results)} done",
-                     ("Looks Good", good),
+        return _card(guild, "Safety Checkup", status, [good],
                      footer="Lookout checks again every Monday and lets you know if something changes.",
-                     buttons=[_button("Back", "page", "home")])
-    return _card(guild, "Safety Checkup", f"{passed} of {len(results)} done",
-                 *fixes, ("Looks Good", good) if good else None,
+                     nav=[_button("Back", "page", "home")])
+    return _card(guild, "Safety Checkup", status, fixes, [good] if good else None,
                  footer="Changed something? Check again to update the list.",
-                 buttons=[_button("Check Again", "checkup"), _button("Back", "page", "home")])
+                 nav=[_button("Back", "page", "home"), _button("Check Again", "checkup")])
 
 
 # first-time setup
@@ -503,8 +537,8 @@ def checkup_page(guild, s: db.GuildSettings, results: list[tuple[str, bool, str]
 def _step(number: int, label: str, text: str, items: list, note: str | None = None):
     if note:
         text += f"\n\n**{note}**"
-    return ui_kit.card("Set Up Lookout", (label, text), subtitle=f"Step {number} of 4", buttons=items,
-                       icon="settings")
+    step = f"Step {number} of 4"
+    return ui_kit.card("Set Up Lookout", (label, text), subtitle=step, line=step, buttons=items, icon="settings")
 
 
 def step_channel(note: str | None = None):
@@ -528,7 +562,7 @@ def step_ages(s: db.GuildSettings, guild=None, manual: bool = False):
     found = None if (manual or s.teen_safety or guild is None) else _found_box(guild, "gfound")
     if found:
         label, (text, use) = found
-        return ui_kit.card("Set Up Lookout", (label, text), subtitle="Step 3 of 4", icon="settings",
+        return ui_kit.card("Set Up Lookout", (label, text), subtitle="Step 3 of 4", line="Step 3 of 4", icon="settings",
                            buttons=[use, _button("Pick Different Roles", "gmanual")])
 
     def roles(field, placeholder, *also):
@@ -551,7 +585,7 @@ def step_age_mode():
     roles = discord.ui.Section("**Teen and Adult Roles**\n-# Pick both. Use this if your server already has roles "
                                "like 13-17 and 18+.", accessory=_button("Use These", "gmode", "roles"))
     return ui_kit.card("Set Up Lookout", ("Age Roles", ["How does your server mark ages?", tbd, roles]),
-                       subtitle="Step 3 of 4", icon="settings")
+                       subtitle="Step 3 of 4", line="Step 3 of 4", icon="settings")
 
 
 def step_adult(s: db.GuildSettings):
@@ -562,7 +596,7 @@ def step_adult(s: db.GuildSettings):
                        ("Your 18+ Role", ["Pick the role only adults have. Everyone without it is protected as a teen.",
                                           menu, f"-# {ADULT_TIP}\n-# Don't want a role at all? Skip this, then post "
                                                 "the invisible 18+ button in **/setup** > **Age Roles**."]),
-                       subtitle="Step 3 of 4 · Teen by Default", icon="settings",
+                       subtitle="Step 3 of 4 · Teen by Default", line="Step 3 of 4 · Teen by Default", icon="settings",
                        buttons=[_button("Back", "gmode", "back"),
                                 _button("Next" if s.teen_safety else "Skip", "gnext")])
 
@@ -742,7 +776,7 @@ class Setup(commands.Cog):
             if arg == "test":
                 s.risk_test_until = time.time() + TEST_DAYS * 86400
             saved(f"warning signs: {arg}")
-            return await show(teen_page(guild, s))
+            return await show(risk_page(guild, s))
         if action != "set":  # old button, just show the panel
             return await show(home(guild, s))
 

@@ -109,14 +109,16 @@ def _banner_name(title: str) -> str:
 
 
 # banner picture if there's an icon (send files(view) with it), otherwise a # title
+# line: plain text drawn into the banner, the subtitle only shows if the banner can't be drawn
 def head(view: ui.LayoutView, title: str, subtitle: str | None = None, icon: str | None = None,
-         thumbnail: str | None = None, banner: bool = True) -> None:
-    data = chart.banner(icon, title) if icon and banner else None
+         thumbnail: str | None = None, banner: bool = True, line: str | None = None) -> None:
+    data = chart.banner(icon, title, line) if icon and banner else None
     if data:
         name = _banner_name(title)
-        view.add_item(ui.MediaGallery(discord.MediaGalleryItem(f"attachment://{name}", description=title)))
+        view.add_item(ui.MediaGallery(discord.MediaGalleryItem(
+            f"attachment://{name}", description=f"{title} · {line}" if line else title)))
         view.banner = (name, data)
-        if subtitle:
+        if subtitle and not line:
             view.add_item(ui.TextDisplay(tidy(_grey(subtitle))))
         return
     text = ui.TextDisplay(tidy(f"# {titled(icon, title) if icon else title}" + (f"\n{_grey(subtitle)}" if subtitle else "")))
@@ -135,7 +137,7 @@ def files(view: ui.LayoutView) -> list[discord.File]:
 def card(title: str | None, *sections, subtitle: str | None = None, thumbnail: str | None = None,
          image: str | list[str] | None = None, footer: str | None = None, buttons: list | None = None,
          brand: bool = False, spoiler: bool = False, image_text: str | list[str] | None = None,
-         icon: str | None = None, banner: bool = True) -> ui.LayoutView:
+         icon: str | None = None, banner: bool = True, line: str | None = None) -> ui.LayoutView:
     view = ui.LayoutView(timeout=None)
     if image:
         images = image if isinstance(image, list) else [image]
@@ -143,7 +145,7 @@ def card(title: str | None, *sections, subtitle: str | None = None, thumbnail: s
         view.add_item(ui.MediaGallery(*[discord.MediaGalleryItem(url, description=text, spoiler=spoiler)
                                         for url, text in zip(images, texts)]))
     if title:
-        head(view, title, subtitle, icon, thumbnail, banner)
+        head(view, title, subtitle, icon, thumbnail, banner, line)
 
     for section in sections:
         if not section:
@@ -186,6 +188,11 @@ def card(title: str | None, *sections, subtitle: str | None = None, thumbnail: s
         mark = f"{ICONS['brand']} " if "brand" in ICONS else ""
         view.add_item(ui.TextDisplay(f"-# {mark}Lookout {year} · [Support Server](<{config.SUPPORT_URL}>)"))
     return view
+
+
+# a row of buttons outside any box
+def button_row(*buttons: ui.Button) -> ui.ActionRow:
+    return ui.ActionRow(*(_style(b) for b in buttons))
 
 
 # 5 per row, menus get their own row
