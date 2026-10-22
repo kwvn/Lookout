@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import re
+import time
 
 import aiohttp
 import discord
@@ -21,10 +22,11 @@ log = logging.getLogger("lookout")
 
 EXTENSIONS = ["cogs.setup", "cogs.help", "cogs.demo", "cogs.staff", "cogs.cases", "cogs.cleanup",
               "cogs.reports", "cogs.reminder", "cogs.appeals", "cogs.summary", "cogs.imagescan", "cogs.teensafety",
-              "cogs.totals", "cogs.trivia", "cogs.network"]
+              "cogs.totals", "cogs.trivia", "cogs.network", "cogs.joinlog"]
 # rotates every few minutes
 STATUSES = ["Always on watch", "On watch · /help", "Keeping teens safe", "Guarding {servers}"]
 STATUS_MINUTES = 5
+SETUP_REMINDER_HOURS = 24  # one nudge if a server still hasn't set Lookout up
 
 ICON_EMOJIS = {"settings": "lookout_settings", "cases": "lookout_cases",
                "report": "lookout_report", "image": "lookout_image", "brand": "lookout",
@@ -68,6 +70,7 @@ class LookoutBot(commands.AutoShardedBot):
         log.info("%d commands ready", len(synced))
         await self._add_owner_commands()
         self.purge_old_logs.start()
+        self.setup_reminders.start()
         self.rotate_status.start()
         if config.HEARTBEAT_URL:
             self.heartbeat.start()
@@ -86,14 +89,14 @@ class LookoutBot(commands.AutoShardedBot):
             except discord.HTTPException:
                 guild_id = 0
         if not guild_id:
-            return log.info("Couldn't find the support server, so /totals, /post-demo and /network are off")
+            return log.info("Couldn't find the support server, so the owner commands are off")
         guild = discord.Object(guild_id)
         for cmd in commands_:
             self.tree.add_command(cmd, guild=guild, override=True)
         try:
             await self._sync(f"commands:{guild_id}", guild=guild)
         except discord.HTTPException as e:
-            log.info("Couldn't add /totals, /post-demo and /network to the support server: %s", e)
+            log.info("Couldn't add the owner commands to the support server: %s", e)
 
     # syncing on every restart is slow and gets rate limited after a few restarts, so only when something changed
     async def _sync(self, key: str, guild: discord.abc.Snowflake | None = None) -> list:
@@ -205,14 +208,17 @@ class LookoutBot(commands.AutoShardedBot):
         if channel.permissions_for(me).attach_files:
             files = [discord.File(io.BytesIO(await asyncio.to_thread(chart.welcome_banner)), filename="welcome.png")]
         title = ui_kit.titled(ui_kit.mascot("wave"), "Thanks for Adding Lookout")
-        view = ui_kit.boxes(title, "Setup takes about a minute.", [
-            ("settings", "Get Started", "Press **Set Up** and pick your mod channel, mod role and age roles.\n"
-                                        "-# Only admins can do this.",
-             [discord.ui.Button(label="Set Up", custom_id="lksetup:start")]),
-            ("brand", "What Lookout Does", "- Removes inappropriate messages adults send to teens\n"
-                                           "- Removes contact info sent to teens\n- Sends reports privately to your mods",
-             None),
-            ("help", "Need Help?", f"Anyone can type {cmd('help')}. For anything else, ask in the support server.",
+        view = ui_kit.boxes(title, "Lookout starts protecting your members once it's set up. It takes about a minute.", [
+            ("settings", "3 Quick Steps", "**1.** Pick a private mod channel for alerts\n**2.** Pick your mod role\n"
+                                          "**3.** Pick your 18+ role, or your teen roles\n-# Only admins can do this.",
+             [discord.ui.Button(label="Set Up", custom_id="lksetup:start"),
+              discord.ui.Button(label="See a Demo First", custom_id="lkhelp:demo")]),
+            ("brand", "What Lookout Does", "- Removes inappropriate messages and contact info adults send to teens\n"
+                                           "- Removes explicit pictures, stickers and links\n"
+                                           "- Lets members report privately to your mods\n"
+                                           "-# Never reads DMs, never needs Administrator.", None),
+            ("help", "Need Help?", f"Anyone can type {cmd('help')}. Stuck on setup? Ask in the support server, we'll "
+                                   "walk you through it.",
              [discord.ui.Button(label="Support Server", style=discord.ButtonStyle.link, url=config.SUPPORT_URL),
               discord.ui.Button(label="YourSitee", style=discord.ButtonStyle.link, url=config.SITE_URL)]),
         ], image="attachment://welcome.png" if files else None,
@@ -220,7 +226,34 @@ class LookoutBot(commands.AutoShardedBot):
         try:
             await channel.send(view=view, files=files)
         except discord.HTTPException:
-            pass
+            return
+        db.save_welcome(guild.id, channel.id)
+
+    # one reminder, a day after joining, for servers that still haven't set Lookout up
+    @tasks.loop(minutes=30)
+    async def setup_reminders(self):
+        for guild_id, channel_id in db.due_setup_reminders(time.time() - SETUP_REMINDER_HOURS * 3600):
+            db.mark_setup_reminded(guild_id)
+            guild = self.get_guild(guild_id)
+            s = db.get_settings(guild_id)
+            channel = guild.get_channel(channel_id) if guild else None
+            if channel is None or (s.configured and s.teen_safety):
+                continue
+            view = ui_kit.card(
+                ui_kit.titled(ui_kit.mascot("sleep"), "Lookout Isn't Set Up Yet"),
+                "Lookout was added a day ago, but it can't protect anyone until it knows where to send alerts and who "
+                "your teens are. It takes about a minute.",
+                footer="Only admins can set it up. This is the only reminder.",
+                buttons=[discord.ui.Button(label="Set Up", custom_id="lksetup:start"),
+                         discord.ui.Button(label="See a Demo First", custom_id="lkhelp:demo")])
+            try:
+                await channel.send(view=view)
+            except discord.HTTPException:
+                pass
+
+    @setup_reminders.before_loop
+    async def _reminders_ready(self):
+        await self.wait_until_ready()
 
     async def on_guild_remove(self, guild: discord.Guild):
         db.forget_guild(guild.id)

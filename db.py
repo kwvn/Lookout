@@ -99,6 +99,14 @@ _conn.executescript(
         guild_id INTEGER, user_id INTEGER, created_at REAL,
         PRIMARY KEY (guild_id, user_id)
     );
+    -- where the welcome message went, for the one setup reminder a day later
+    CREATE TABLE IF NOT EXISTS welcomes (
+        guild_id INTEGER PRIMARY KEY, channel_id INTEGER, sent_at REAL, reminded INTEGER DEFAULT 0
+    );
+    -- /join-log: the post about each server lookout joined, edited as its setup goes along
+    CREATE TABLE IF NOT EXISTS join_log (
+        guild_id INTEGER PRIMARY KEY, message_id INTEGER, joined_at REAL, stage INTEGER DEFAULT 0, servers INTEGER
+    );
 
     -- removed features (age-aware voice, /trust, first-contact heads-up, selfie reply block)
     DROP TABLE IF EXISTS first_contacts;
@@ -248,7 +256,7 @@ def forget_guild(guild_id: int) -> None:
         _conn.execute(f"DELETE FROM {table} WHERE message_id IN (SELECT message_id FROM alerts WHERE guild_id=?)",
                       (guild_id,))
     # network_catches stay, see the table
-    for table in ("alerts", "appeals", "events", "guilds", "trivia_points", "network_alerts") + TEEN_TABLES:
+    for table in ("alerts", "appeals", "events", "guilds", "trivia_points", "network_alerts", "welcomes") + TEEN_TABLES:
         _conn.execute(f"DELETE FROM {table} WHERE guild_id=?", (guild_id,))
     _conn.commit()
 
@@ -858,6 +866,46 @@ def network_size() -> int:
         "SELECT COUNT(*) FROM (SELECT user_id FROM network_catches WHERE created_at>=? GROUP BY user_id"
         " HAVING COUNT(DISTINCT guild_id)>=? AND COUNT(DISTINCT teen_id)>=?)",
         (time.time() - NETWORK_DAYS * 86400, NETWORK_SERVERS, NETWORK_TEENS)).fetchone()[0]
+
+
+# setup reminder
+
+def save_welcome(guild_id: int, channel_id: int) -> None:
+    _conn.execute("INSERT OR REPLACE INTO welcomes VALUES (?, ?, ?, 0)", (guild_id, channel_id, time.time()))
+    _conn.commit()
+
+
+def due_setup_reminders(sent_before: float) -> list[tuple[int, int]]:
+    return _conn.execute("SELECT guild_id, channel_id FROM welcomes WHERE reminded=0 AND sent_at<?",
+                         (sent_before,)).fetchall()
+
+
+def mark_setup_reminded(guild_id: int) -> None:
+    _conn.execute("UPDATE welcomes SET reminded=1 WHERE guild_id=?", (guild_id,))
+    _conn.commit()
+
+
+# join log
+
+def log_join(guild_id: int, message_id: int, servers: int) -> None:
+    _conn.execute("INSERT OR REPLACE INTO join_log VALUES (?, ?, ?, 0, ?)", (guild_id, message_id, time.time(), servers))
+    _conn.commit()
+
+
+def join_entry(guild_id: int) -> dict | None:
+    row = _conn.execute("SELECT message_id, joined_at, stage, servers FROM join_log WHERE guild_id=?",
+                        (guild_id,)).fetchone()
+    return dict(zip(("message_id", "joined_at", "stage", "servers"), row)) if row else None
+
+
+def set_join_stage(guild_id: int, stage: int) -> None:
+    _conn.execute("UPDATE join_log SET stage=? WHERE guild_id=?", (stage, guild_id))
+    _conn.commit()
+
+
+def drop_join(guild_id: int) -> None:
+    _conn.execute("DELETE FROM join_log WHERE guild_id=?", (guild_id,))
+    _conn.commit()
 
 
 # totals

@@ -564,13 +564,31 @@ def step_panel(note: str | None = None):
                  "report without typing a command.", [menu, _button("Skip", "skippanel")], note)
 
 
-FIRST_DONE = ("Setup is done. One more step: in **Server Settings** > **Roles**, drag Lookout's role above your "
-              "members' roles, so it can time out and disconnect them.")
+# the end of the first-time steps. the role tip only shows up when it's actually needed
+def all_set(guild, s: db.GuildSettings, demo: str):
+    on = [line for ok, line in ((s.teen_safety and s.flirty_filter, "Removing inappropriate messages adults send to teens"),
+                                (s.teen_safety and s.contact_filter, "Removing contact info sent to teens"),
+                                (s.image_scan, "Removing explicit pictures"),
+                                (s.staff_channel_id, f"Sending alerts to <#{s.staff_channel_id}>")) if ok]
+    roles = [r for r in (guild.get_role(i) for i in s.role_ids("young_roles") | s.role_ids("older_roles")
+                         | s.role_ids("adult_roles")) if r]
+    low = [r for r in roles if guild.me.top_role <= r]
+    buttons = [_button("Open Settings", "page", "home")]
+    if not s.panel_channel_id:
+        buttons.append(_button("Post the Report Button", "page", "reports"))
+    return ui_kit.card(
+        ui_kit.titled(ui_kit.mascot("party"), "You're All Set"),
+        ("Lookout Is Now", "\n".join(f"- {line}" for line in on)),
+        ("Lookout's Role", f"**It's below {' '.join(r.mention for r in low[:3])}.** Drag it above them in **Server "
+                           "Settings** > **Roles**, so the Timeout button works on those members.") if low else None,
+        ("Try It", f"See what an alert looks like with {demo}. Only you see it."),
+        buttons=buttons)
 
 
 class Setup(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._tasks: set[asyncio.Task] = set()
 
     @app_commands.command(name="setup", description="Set up Lookout and change its settings")
     @app_commands.default_permissions(manage_guild=True)
@@ -607,6 +625,11 @@ class Setup(commands.Cog):
         def saved(what):
             db.save_settings(s)
             db.log(guild.id, None, "settings_changed", what, actor_id=user.id)
+            joins = self.bot.get_cog("JoinLog")
+            if joins:  # updates the /join-log post for this server
+                task = asyncio.create_task(joins.progress(guild, s))
+                self._tasks.add(task)
+                task.add_done_callback(self._tasks.discard)
 
         def can_post(channel) -> bool:
             perms = channel.permissions_for(guild.me) if channel else None
@@ -672,7 +695,8 @@ class Setup(commands.Cog):
                                                  "this step."))
                 s.panel_channel_id = channel.id
                 saved("report button, in the setup steps")
-            return await show(home(guild, s, note=ui_kit.titled(ui_kit.mascot("party"), FIRST_DONE)))
+            demo = self.bot.command_ids.get("demo")
+            return await show(all_set(guild, s, f"</demo:{demo}>" if demo else "`/demo`"))
 
         # panel
         if action == "page":
