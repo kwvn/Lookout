@@ -47,24 +47,20 @@ def claim_button(member_id, channel_id, claim: tuple[int, str] | None) -> discor
     return discord.ui.Button(label=label, custom_id=_cid("claim", member_id, channel_id))
 
 
+# Claim and Resolve as buttons, everything else in the Take action… menu (ui_kit.add_action).
 # ids live in the custom_id so the buttons survive restarts
 def action_buttons(guild_id: int, channel_id: int | None, member_id: int | None,
-                   claim: tuple[int, str] | None = None) -> list[discord.ui.Item | None]:
+                   claim: tuple[int, str] | None = None, voice: bool = False) -> list[discord.ui.Item | None]:
     c = channel_id or 0
     items: list[discord.ui.Item | None] = [
         claim_button(member_id, c, claim),
         discord.ui.Button(label="Resolve", custom_id=_cid("resolve", member_id, c)),
     ]
-    if channel_id:
-        items.append(discord.ui.Button(label="Open Channel", style=discord.ButtonStyle.link,
-                                       url=f"https://discord.com/channels/{guild_id}/{channel_id}"))
     if member_id:
-        items += [None,
-                  discord.ui.Button(label="Warn", custom_id=_cid("warn", member_id, c)),
-                  discord.ui.Button(label="Timeout", custom_id=_cid("timeout", member_id, c)),
-                  discord.ui.Button(label="Disconnect", custom_id=_cid("disconnect", member_id, c))]
-    items += [None, discord.ui.UserSelect(custom_id=_cid("pick", 0, c),
-                                          placeholder="Pick a member to warn, time out or disconnect...")]
+        ui_kit.add_action(items, "Warn", "They get a DM, and it's saved in their history", _cid("warn", member_id, c))
+        ui_kit.add_action(items, "Time Out", "Mute them for a while", _cid("timeout", member_id, c))
+        if voice:
+            ui_kit.add_action(items, "Disconnect", "Take them out of the voice channel", _cid("disconnect", member_id, c))
     return items
 
 
@@ -133,7 +129,7 @@ class Staff(commands.Cog):
                                                                  discord.InteractionType.modal_submit):
             return
         data = interaction.data or {}
-        cid = data.get("custom_id", "")
+        cid = ui_kit.custom_id(interaction)
         if not cid.startswith(PREFIX + ":"):
             return
         parts = cid.split(":") + ["0", ""]  # old ids have fewer parts

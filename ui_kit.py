@@ -324,6 +324,25 @@ def remove_actions(box: ui.Container) -> None:
             box.remove_item(item)
 
 
+# the "Take action…" menu on alerts. each option's value is the custom id of the button it replaced,
+# so the cogs handle a pick the same way they handled the button
+ACTION_MENU = "lkact"
+
+
+def custom_id(interaction: discord.Interaction) -> str:
+    data = interaction.data or {}
+    cid = data.get("custom_id", "")
+    return (data.get("values") or [""])[0] if cid == ACTION_MENU else cid
+
+
+def add_action(items: list, label: str, description: str, cid: str) -> None:
+    menu = next((i for i in items if isinstance(i, ui.Select) and i.custom_id == ACTION_MENU), None)
+    if menu is None:
+        menu = ui.Select(custom_id=ACTION_MENU, placeholder="Take action…")
+        items += [None, menu]
+    menu.add_option(label=label, description=description, value=cid)
+
+
 # only ever ping that one role
 def ping_for(role_id: int | None) -> discord.AllowedMentions:
     return discord.AllowedMentions(everyone=False, users=False,

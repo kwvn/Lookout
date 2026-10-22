@@ -17,6 +17,8 @@ THREAT = re.compile(r"\bi'?ll (?:post|leak) (?:your|ur) (?:pics|nudes)\b", re.I)
 EN_SEVERE = re.compile(r"\b(?:wanna|let'?s) meet (?:up )?after school\b|" + THREAT.pattern, re.I)
 EN_INAPPROPRIATE = re.compile(r"\bdon'?t tell (?:your|ur) parents\b|\b(?:are|r) (?:you|u) home alone\b", re.I)
 
+NUDE_ASK = re.compile(r"\bsend (?:me )?nudes\b|\berp\b", re.I)  # checked for everyone talking to a teen
+
 # warning signs only, never removed
 PROBE = re.compile(r"\bhow old (?:are|r) (?:you|u)\b|\bwhere (?:do|d) (?:you|u) live\b", re.I)
 PRIVATE = re.compile(r"\b(?:check|open) (?:your|ur) dms\b|\bmove (?:this|it) to snap\b", re.I)

@@ -178,7 +178,8 @@ class ImageScan(commands.Cog):
             f"**{'Urgent' if teen else 'Open'}** · Unclaimed · {'deleted' if deleted else 'still there'}",
             [("member", "Who", f"{author.mention} · {flags} flag{'' if flags == 1 else 's'} so far"),
              ("report", "What Happened", what), ("cases", "Where", message.channel.mention)],
-            buttons=action_buttons(message.guild.id, voice, author.id), thumbnail=author.display_avatar.url,
+            buttons=action_buttons(message.guild.id, voice, author.id, voice=bool(voice)),
+            thumbnail=author.display_avatar.url,
             footer=("If someone pressured them into it, it can be sextortion. Report it to Discord at "
                     "https://dis.gd/request. Take It Down can help stop it spreading." if teen else
                     "The image isn't shown here on purpose. If it could be illegal, report it to Discord at "

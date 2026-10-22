@@ -152,6 +152,12 @@ def has_threat(text: str) -> bool:
     return bool(threat) and any(threat.search(v) for v in variants(text))
 
 
+# asking a teen for nudes, sexting or erotic roleplay. checked even when a teen asks, see wordlists.NUDE_ASK
+def has_nude_ask(text: str) -> bool:
+    ask = getattr(wordlists, "NUDE_ASK", None)
+    return bool(ask) and any(ask.search(v) for v in variants(text))
+
+
 # "probe" (age, school, where they live) or "private" (dms, other apps, calls). warning signs only
 def soft_sign(text: str) -> str | None:
     for kind, rx in (("probe", getattr(wordlists, "PROBE", None)), ("private", getattr(wordlists, "PRIVATE", None))):
@@ -332,7 +338,10 @@ class TeenSafety(commands.Cog):
 
         # sextortion usually comes from someone pretending to be a teen, so this one isn't only for adults
         if mine != ADULT and s.flirty_filter and has_threat(text):
-            return await self._threat(message, author, s)
+            return await self._from_anyone(message, author, s, threat=True)
+        # discord doesn't allow asking a minor for nudes even when it's another teen asking
+        if mine != ADULT and s.flirty_filter and has_nude_ask(text):
+            return await self._from_anyone(message, author, s, threat=False)
 
         if mine == TEEN:
             if s.contact_filter and has_contact(text, own=True):
@@ -457,7 +466,7 @@ class TeenSafety(commands.Cog):
     # so False Alarm can undo all of them
     async def _flirty_alert(self, message: discord.Message, adult: discord.Member, teen: discord.Member, kind: str,
                             read_as: str | None, removed: bool, s: db.GuildSettings, lang: str | None = "en",
-                            threat: bool = False) -> None:
+                            threat: bool = False, sexual: bool = False) -> None:
         guild = message.guild
         ref = message.reference.resolved if message.reference else None
         jump = ref.jump_url if isinstance(ref, discord.Message) else message.channel.jump_url
@@ -483,10 +492,16 @@ class TeenSafety(commands.Cog):
             done = f"**Spelled to get past filters.** Lookout read it as {_hidden(read_as, 300)}\n-# " + done
         buttons = action_buttons(guild.id, message.channel.id, adult.id)
         buttons.insert(2, self._btn("False Alarm", "falsealarm", adult.id, message.id))
-        what = (f"Threatened to share pictures of <@{teen.id}> (under 18). This is how sextortion starts." if threat
-                else f"Sent an inappropriate message to <@{teen.id}> (under 18).")
+        if threat:
+            title, what = ("Threat to Share Pictures",
+                           f"Threatened to share pictures of <@{teen.id}> (under 18). This is how sextortion starts.")
+        elif sexual:  # sent by a teen or someone without an age role
+            title, what = ("Sexual Request to a Teen", f"Asked <@{teen.id}> (under 18) for nudes or something sexual. "
+                                                       "Discord doesn't allow this even between two teens.")
+        else:
+            title, what = "Inappropriate Message", f"Sent an inappropriate message to <@{teen.id}> (under 18)."
         alert_id = await self._case(
-            guild, s, adult.id, "teen", "Threat to Share Pictures" if threat else "Inappropriate Message", [
+            guild, s, adult.id, "teen", title, [
                 ("member", "Who", ui_kit.member_line(adult)),
                 ("report", "What Happened", what
                                             + (f" **{wordlists.NAMES[lang]}.**" if lang and lang != "en" else "") + "\n"
@@ -537,21 +552,26 @@ class TeenSafety(commands.Cog):
         except discord.HTTPException:
             pass
 
-    # a threat to share a teen's pictures from someone who isn't an adult here (adults go through on_message)
-    async def _threat(self, message: discord.Message, author: discord.Member, s: db.GuildSettings) -> None:
+    # a threat to share pictures, or asking for nudes, sent to a teen by someone who isn't an adult here
+    # (adults go through on_message)
+    async def _from_anyone(self, message: discord.Message, author: discord.Member, s: db.GuildSettings,
+                           threat: bool) -> None:
         teens = await self._teens_reached(message, s) or await self._teen_nearby(message, s)
         if not teens:
             return
         guild = message.guild
         db.log(guild.id, author.id, "teen_flirty", (message.content or "")[:200], message.channel.id,
                message_id=message.id)
-        removed = await self._remove(message, f"Your message in {message.channel.mention} was removed. Threatening to "
-                                              "share someone's pictures isn't allowed here, and the mods have been told.")
-        await self._flirty_alert(message, author, teens[0], "severe", None, removed, s, threat=True)
+        why = ("Threatening to share someone's pictures isn't allowed here" if threat else
+               "Asking for nudes or anything sexual isn't allowed with anyone under 18, even between teens")
+        removed = await self._remove(message, f"Your message in {message.channel.mention} was removed. {why}, and the "
+                                              "mods have been told.")
+        await self._flirty_alert(message, author, teens[0], "severe", None, removed, s, threat=threat,
+                                 sexual=not threat)
         if removed:
             db.bump("removed")
             for teen in teens:
-                await self._heads_up(message, author, teen, threat=True)
+                await self._heads_up(message, author, teen, threat=threat)
         await self._check_risk(guild, author, s)
 
     # keep away after 2 reports
@@ -613,8 +633,9 @@ class TeenSafety(commands.Cog):
                     thumbnail=None, evidence=None, status=None, ping=None, summary=None, report=True) -> int | None:
         case_no = db.next_case_no(guild.id)
         if report:
-            first_row = buttons.index(None) if None in buttons else len(buttons)
-            buttons = buttons[:first_row] + [self._btn("Report to Discord", "tns", target_id)] + buttons[first_row:]
+            buttons = list(buttons)
+            ui_kit.add_action(buttons, "Report to Discord", "A ready-made report for Discord's safety team",
+                              f"{PREFIX}:tns:{target_id}")
         ping = urgent if ping is None else ping
         view = ui_kit.alert(
             ui_kit.titled("staff", f"{title} · #{case_no}"),
@@ -883,7 +904,8 @@ class TeenSafety(commands.Cog):
             ("Looks Like", f"<@{old['user_id']}> · " + ("kept away from teens, " if old["restricted"] else "") + left),
         ])
         buttons = action_buttons(member.guild.id, None, member.id)
-        buttons.insert(2, self._btn("Keep Away From Teens", "keepaway", member.id))
+        ui_kit.add_action(buttons, "Keep Away From Teens", "Their replies and mentions to teens get removed",
+                          f"{PREFIX}:keepaway:{member.id}")
         await self._case(member.guild, s, member.id, "teen", "Possible Alt Account",
                          [("member", "Who", info), ("warning", "Why Lookout Thinks So", "\n".join(f"- {w}" for w in why))],
                          footer="Take a look before acting. Keep Away From Teens gives the new account the same "
@@ -909,7 +931,8 @@ class TeenSafety(commands.Cog):
         n, last = len(record["catches"]), int(record["catches"][0]["created_at"])
         teen_here = s.teen_safety and self.band(member, s, explicit=True) == TEEN
         buttons = action_buttons(guild.id, message.channel.id, member.id)
-        buttons.insert(2, self._btn("Keep Away From Teens", "netkeep", member.id))
+        ui_kit.add_action(buttons, "Keep Away From Teens", "Their replies and mentions to teens get removed",
+                          f"{PREFIX}:netkeep:{member.id}")
         await self._case(guild, s, member.id, "teen", "Caught in Other Servers", [
             ("member", "Who", ui_kit.member_line(member)),
             ("warning", "What Happened Before",
@@ -977,7 +1000,7 @@ class TeenSafety(commands.Cog):
     async def on_interaction(self, interaction: discord.Interaction):
         if interaction.type not in (discord.InteractionType.component, discord.InteractionType.modal_submit):
             return
-        parts = (interaction.data or {}).get("custom_id", "").split(":")
+        parts = ui_kit.custom_id(interaction).split(":")
         if parts[0] != PREFIX or len(parts) < 3:
             return
         action, ids = parts[1], [int(p) for p in parts[2:] if p.isdigit()]

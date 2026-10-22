@@ -129,7 +129,7 @@ class Demo(commands.Cog):
     async def on_interaction(self, interaction: discord.Interaction):
         if interaction.type != discord.InteractionType.component:
             return
-        parts = (interaction.data or {}).get("custom_id", "").split(":")
+        parts = ui_kit.custom_id(interaction).split(":")
         if parts[0] != PREFIX or len(parts) < 3:
             return
         try:
@@ -232,9 +232,13 @@ class Demo(commands.Cog):
             claim = discord.ui.Button(label=f"Claimed by {user.display_name}"[:80] if state & CLAIMED else "Claim",
                                       custom_id=f"{PREFIX}:act:{state}:{CLAIMED}", disabled=bool(state & CLAIMED))
             status = f"**Open** · {'Claimed by ' + you if state & CLAIMED else 'Unclaimed'} · 1 report"
-            buttons = [claim, act("Resolve", RESOLVED), None,
-                       act("Warn", WARNED), act("Timeout", TIMED_OUT), act("Disconnect", DISCONNECTED)]
-            footer = "Mods get this in their private channel. Try the buttons, nothing real happens."
+            buttons = [claim, act("Resolve", RESOLVED)]
+            for label, text, bit in (("Warn", "They get a DM, and it's saved in their history", WARNED),
+                                     ("Time Out", "Mute them for a while", TIMED_OUT),
+                                     ("Disconnect", "Take them out of the voice channel", DISCONNECTED)):
+                if not state & bit:  # same Take action… menu as the real alerts
+                    ui_kit.add_action(buttons, label, text, f"{PREFIX}:act:{state}:{bit}")
+            footer = "Mods get this in their private channel. Try the buttons and the menu, nothing real happens."
         return ui_kit.alert(
             "Demo", f"**Voice Report #12** · {_step(2)}", status, [
                 ("member", "Who", "User · streaming · 2 earlier flags"),

@@ -49,6 +49,9 @@ PAGE_OF = {"filter_languages": "langs", "staff_channel": "staff", "staff_role": 
            "adult_button": "ages",
            "post_panel": "reports", "post_tips": "reports", "report_updates": "reports", "appeals": "reports",
            "image_scan": "extras", "weekly_summary": "extras", "trivia_channel": "extras", "network": "extras"}
+# channel names that look like dating or rating each other's looks, for the Safety Checkup
+DATING = re.compile(r"dating|e-?date|couples?|selfies?|rate-?me|smash-?or-?pass|hot-?or-?not|lf-?(?:bf|gf)|"
+                    r"looking-?for-?(?:love|a-?bf|a-?gf)", re.I)
 VERIFICATION = {
     discord.VerificationLevel.none: "None. Anyone can chat right away.",
     discord.VerificationLevel.low: "Low. Members only need a verified email.",
@@ -403,8 +406,8 @@ PAGES = {"home": home, "staff": staff_page, "teen": teen_page, "ages": ages_page
 
 # safety checkup
 
-CHECKS = ("Image Filter", "Verification Level", "Age Question", "Age-Restricted Channels", "Lookout's Role",
-          "Mod 2FA")
+CHECKS = ("Image Filter", "Verification Level", "Age Question", "Age-Restricted Channels", "Dating Channels",
+          "Lookout's Role", "Mod 2FA")
 
 
 # (name, ok, text) for each check, failed ones first
@@ -458,6 +461,16 @@ async def safety_checkup(guild: discord.Guild, s: db.GuildSettings) -> list[tupl
     results.append(("Age-Restricted Channels", not seen, "Teens can't see any of them." if not seen else
                     f"Teen roles can see {' '.join(c.mention for c in seen[:5])}. Take View Channel away from your "
                     "teen roles there.\n-# **Edit Channel** > **Permissions**"))
+
+    # discord doesn't allow dating spaces for anyone under 18, a server can be taken down for one
+    viewers = teen_roles or ([guild.default_role] if s.teen_default else [])
+    dating = [c for c in guild.text_channels if DATING.search(c.name) and not getattr(c, "nsfw", False)
+              and any(c.permissions_for(r).view_channel for r in viewers)]
+    results.append(("Dating Channels", not dating, "Teens can't see any dating or selfie channels." if not dating else
+                    f"Teens can see {' '.join(c.mention for c in dating[:5])}. Discord doesn't allow dating spaces "
+                    "for anyone under 18, and a server can be taken down for them. Selfie and rating channels draw in "
+                    "people looking for teens too. Delete them, or take **View Channel** away from your teen roles "
+                    "there.\n-# **Edit Channel** > **Permissions**"))
 
     me = guild.me
     ok = not age_roles or all(me.top_role > r for r in age_roles)
@@ -594,6 +607,12 @@ class Setup(commands.Cog):
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.guild_only()
     async def setup_cmd(self, interaction: discord.Interaction):
+        # servers can change who sees the command in Integrations, so check here too
+        user = interaction.user
+        if not isinstance(user, discord.Member) or not user.guild_permissions.manage_guild:
+            return await interaction.response.send_message(
+                view=ui_kit.note("Only admins can set up Lookout. You need the **Manage Server** permission."),
+                ephemeral=True)
         s = db.get_settings(interaction.guild.id)
         view = home(interaction.guild, s) if s.configured else step_channel()
         await interaction.response.send_message(view=view, files=ui_kit.files(view), ephemeral=True,

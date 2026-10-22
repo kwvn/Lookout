@@ -636,14 +636,12 @@ class Reports(commands.Cog):
         status = (f"**{'Urgent' if urgent else 'Open'}** · {f'Claimed by <@{claim[0]}>' if claim else 'Unclaimed'}"
                   f" · {count} report{'' if count == 1 else 's'}")
         title = "Urgent Report" if urgent else "Voice Report" if voice else "Report"
-        buttons = action_buttons(guild.id, channel.id if channel else None, case.target_id, claim=claim)
+        buttons = action_buttons(guild.id, channel.id if channel else None, case.target_id, claim=claim, voice=voice)
         in_server = [m for m in case.messages if not m.get("dm")]  # can't delete DMs
         if in_server:
             last = in_server[-1]
-            delete = discord.ui.Button(label="Delete Message", custom_id=_cid("delmsg", case.target_id, last["channel_id"],
-                                                                            0, last["message_id"]))
-            rows = [i for i, b in enumerate(buttons) if b is None]
-            buttons.insert(rows[1] if len(rows) > 1 else (rows[0] if rows else len(buttons)), delete)
+            ui_kit.add_action(buttons, "Delete Message", "Remove the reported message from the chat",
+                              _cid("delmsg", case.target_id, last["channel_id"], 0, last["message_id"]))
         return ui_kit.alert(
             ui_kit.titled("voice" if voice else "report", title + (f" · #{case.case_no}" if case.case_no else "")),
             f"{channel.mention if channel else 'Reported from a DM'} · Reported <t:{int(case.started)}:R>"
