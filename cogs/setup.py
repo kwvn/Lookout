@@ -152,57 +152,61 @@ def _card(guild, title: str, status: str, *boxes, nav=(), footer=None):
 
 # panel
 
+# a home block: a heading, the details under it, one button on the right
+def _block(title: str, details: list, button: discord.ui.Button, note: str | None = None) -> discord.ui.Section:
+    return discord.ui.Section(f"### {title}\n{ui_kit.kv(details)}" + (f"\n{note}" if note else ""), accessory=button)
+
+
 def home(guild: discord.Guild, s: db.GuildSettings, note: str | None = None):
     perms, ok = permission_report(guild, s)
     mods = _channel(guild, s.staff_channel_id)
-    if mods:
-        role = f"<@&{s.staff_role_id}>" if s.staff_role_id else "anyone with Timeout Members"
-        staff = _row("Mods", "Set", f"Alerts go to {mods} · {role} handles them", _button("Edit", "page", "staff"))
-    else:
-        staff = _row("Mods", "Not set", "Pick the private channel where alerts go", _button("Set Up", "page", "staff"))
+    reminder = dict(REMINDERS).get(s.reminder_minutes, f"One ping after {s.reminder_minutes} minutes")
+    staff = _block("Mods", [("Mod Channel", mods or "Not set"),
+                            ("Mod Role", f"<@&{s.staff_role_id}>" if s.staff_role_id else "Anyone with Timeout Members"),
+                            ("Claim Reminder", reminder)],
+                   _button("Edit" if mods else "Set Up", "page", "staff"))
 
     on = sum(getattr(s, f) for f, _, _ in PROTECTIONS) + (s.risk_now() != "off")
     if s.teen_safety:
-        teens = ("Everyone without an 18+ role counts as a teen" if s.teen_default
-                 else f"Teen roles: {_roles(s, 'young_roles', 'older_roles')}")
-        teen = _row("Teen Safety", f"On, {on} of {len(PROTECTIONS) + 1} protections", teens,
-                    _button("Edit", "page", "teen"))
+        teen = _block("Teen Safety", [
+            ("Status", f"On, {on} of {len(PROTECTIONS) + 1} protections"),
+            ("Teens", f"Everyone without {_roles(s, 'adult_roles')} (Teen by Default)") if s.teen_default else
+            ("Teen Roles", _roles(s, "young_roles", "older_roles")),
+            ("Adult Roles", None if s.teen_default else _roles(s, "adult_roles")),
+            ("Warning Signs", _risk_text(s))], _button("Edit", "page", "teen"))
     else:
-        teen = _row("Teen Safety", "Off", "Pick your age roles to turn on the filters", _button("Turn On", "page", "ages"))
+        teen = _block("Teen Safety", [("Status", "Off")], _button("Set Up", "page", "teen"),
+                      "Pick your age roles to turn on the filters.")
 
     panel, tips = _channel(guild, s.panel_channel_id), _channel(guild, s.tips_channel_id)
-    if panel:
-        reports = _row("Reports", "Posted", f"Report button in {panel}" + (f" · Safety tips in {tips}" if tips else ""),
-                       _button("Edit", "page", "reports"))
-    else:
-        reports = _row("Reports", "Not posted", "The Report button isn't posted yet", _button("Post It", "page", "reports"))
+    reports = _block("Reports", [("Report Button", f"Posted in {panel}" if panel else "Not posted yet"),
+                                 ("Safety Tips", f"Posted in {tips}" if tips else "Not posted yet"),
+                                 ("Reporter Updates", "On" if s.report_updates else "Off")],
+                     _button("Edit" if panel else "Post It", "page", "reports"))
 
     left = None if s.checkup_score is None else max(0, len(CHECKS) - s.checkup_score)
     if left is None:
-        checkup = _row("Safety Checkup", "Not run yet", "Checks a few of your server's own Discord settings",
-                       _button("Run It", "checkup"))
+        checkup = _block("Safety Checkup", [("Status", "Not run yet")], _button("Run It", "checkup"),
+                         "Checks a few of your server's own Discord settings in one go.")
     elif not left:
-        checkup = _row("Safety Checkup", "All good", "Your server's own settings look good",
-                       _button("Check Again", "checkup"))
+        checkup = _block("Safety Checkup", [("Status", f"All good, {len(CHECKS)} of {len(CHECKS)}")],
+                         _button("Check Again", "checkup"), "Your server's own settings look good.")
     else:
-        checkup = _row("Safety Checkup", f"{left} to fix", "One of your server's own settings could keep teens safer"
-                       if left == 1 else "A few of your server's own settings could keep teens safer",
-                       _button("Review", "checkup"))
+        checkup = _block("Safety Checkup", [("Status", f"{left} to fix")], _button("Review", "checkup"),
+                         "One of your server's own settings could keep teens safer." if left == 1 else
+                         "A few of your server's own settings could keep teens safer.")
 
-    extras = [name for name, on in (("image filter", s.image_scan), ("Lookout Network", s.network),
-                                    ("weekly summary", s.weekly_summary),
-                                    ("trivia", _channel(guild, s.trivia_channel_id))) if on]
-    text = ", ".join(extras) or "Image filter, Lookout Network, weekly summary, trivia"
-    extra = _row("Extras", f"{len(extras)} on" if extras else "All off", text[:1].upper() + text[1:],
-                 _button("Open", "page", "extras"))
+    trivia = _channel(guild, s.trivia_channel_id)
+    extra = _block("Extras", [("Image Filter", "On" if s.image_scan else "Off"),
+                              ("Lookout Network", "On" if s.network else "Off"),
+                              ("Weekly Summary", "On" if s.weekly_summary else "Off"),
+                              ("Trivia", trivia or "Not set")], _button("Open", "page", "extras"))
 
     broken = bool(mods) and not ok  # missing permissions, or ones lookout doesn't need
     fix = sum((not mods, not s.teen_safety, broken, bool(left)))
     status = f"{fix} thing{'' if fix == 1 else 's'} to fix" if fix else "Everything's working"
     return _card(guild, "Settings", status,
-                 [f"**Permissions** · Needs a fix\n{perms}" if broken else None,
-                  staff, teen, reports, checkup, extra],
-                 footer=note or ("Lookout has every permission it needs" if ok else None))
+                 [staff, teen, reports, f"### Permissions\n{perms}", checkup, extra], footer=note)
 
 
 def staff_page(guild, s: db.GuildSettings):
@@ -222,8 +226,8 @@ def staff_page(guild, s: db.GuildSettings):
 def teen_page(guild, s: db.GuildSettings):
     on = sum(getattr(s, f) for f, _, _ in PROTECTIONS) + (s.risk_now() != "off")
     if not s.teen_safety:
-        who = ("Teen safety stays off until you pick your 18+ role" if s.teen_default else
-               "Teen safety stays off until you pick at least one teen role")
+        who = (("Pick your 18+ role" if s.teen_default else "Pick at least one teen role")
+               + ". Until then, nothing below is working yet")
     elif s.teen_default:
         who = f"Everyone without {_roles(s, 'adult_roles')} (Teen by Default)"
         adult = _channel(guild, s.adult_channel_id)
