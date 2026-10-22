@@ -38,6 +38,7 @@ TOPGG_TOKEN = os.getenv("TOPGG_TOKEN", "").strip()
 
 SUPPORT_URL = "https://discord.gg/BKedYyHgn9"
 SITE_URL = "https://yoursit.ee/lookout"  # the YourSitee link page
+PRIVACY_URL = "https://mammoth-elbow-750.notion.site/Lookout-Privacy-Policy-cbc29be557c84c9085bf55ac9e90e351"
 # where /totals and /post-demo get synced, looked up from SUPPORT_URL if empty
 SUPPORT_GUILD_ID = _int("SUPPORT_GUILD_ID", 0)
 
