@@ -21,10 +21,6 @@ _conn.executescript(
     CREATE TABLE IF NOT EXISTS alert_actions (
         message_id INTEGER, text TEXT, created_at REAL
     );
-    CREATE TABLE IF NOT EXISTS appeals (
-        event_id INTEGER PRIMARY KEY, guild_id INTEGER, user_id INTEGER, text TEXT,
-        status TEXT DEFAULT 'pending', decided_by INTEGER, created_at REAL
-    );
     CREATE TABLE IF NOT EXISTS reporters (
         message_id INTEGER, user_id INTEGER, created_at REAL,
         PRIMARY KEY (message_id, user_id)
@@ -108,11 +104,12 @@ _conn.executescript(
         guild_id INTEGER PRIMARY KEY, message_id INTEGER, joined_at REAL, stage INTEGER DEFAULT 0, servers INTEGER
     );
 
-    -- removed features (age-aware voice, /trust, first-contact heads-up, selfie reply block)
+    -- removed features (age-aware voice, /trust, first-contact heads-up, selfie reply block, warning appeals)
     DROP TABLE IF EXISTS first_contacts;
     DROP TABLE IF EXISTS trust;
     DROP TABLE IF EXISTS age_seen;
     DROP TABLE IF EXISTS teen_photos;
+    DROP TABLE IF EXISTS appeals;
     DELETE FROM teen_signals WHERE kind NOT IN ('flirty', 'contact', 'teen_report', 'probe', 'private');
     """
 )
@@ -121,13 +118,13 @@ _conn.commit()
 
 # columns added after the first version. old dbs also have a few unused ones left
 _GUILD_COLS = {"weekly_summary": "INTEGER DEFAULT 1", "summary_sent_at": "REAL",
-               "reminder_minutes": "INTEGER DEFAULT 5", "appeals": "INTEGER DEFAULT 1",
+               "reminder_minutes": "INTEGER DEFAULT 5",
                "report_updates": "INTEGER DEFAULT 1", "panel_channel_id": "INTEGER",
                "young_roles": "TEXT", "older_roles": "TEXT", "adult_roles": "TEXT",
                "no_age_role": "TEXT DEFAULT 'adult'", "contact_filter": "INTEGER DEFAULT 1",
-               "teen_restrict": "INTEGER DEFAULT 1", "risk_mode": "TEXT DEFAULT 'test'",
+               "teen_restrict": "INTEGER DEFAULT 1", "risk_mode": "TEXT DEFAULT 'on'",
                "risk_test_until": "REAL", "last_case": "INTEGER", "tips_dm": "INTEGER DEFAULT 1",
-               "selfie_guard": "INTEGER DEFAULT 1", "nick_check": "INTEGER DEFAULT 1",
+               "nick_check": "INTEGER DEFAULT 1",
                "alt_catcher": "INTEGER DEFAULT 1", "tips_channel_id": "INTEGER", "flirty_filter": "INTEGER DEFAULT 1",
                "checkup_score": "INTEGER", "checkup_at": "REAL", "filter_languages": "TEXT DEFAULT 'en'",
                "age_check": "INTEGER DEFAULT 1", "adult_channel_id": "INTEGER", "trivia_channel_id": "INTEGER",
@@ -165,7 +162,6 @@ class GuildSettings:
     image_scan: bool = True
     weekly_summary: bool = True
     reminder_minutes: int = 5  # minutes, 0 = off
-    appeals: bool = True                 # warned members can appeal from the DM
     report_updates: bool = True          # tell reporters by DM when their case is closed
     panel_channel_id: int | None = None  # where the Report button was last posted
 
@@ -176,10 +172,9 @@ class GuildSettings:
     no_age_role: str = "adult"           # members with no age role count as "adult", "teen" or "ignore"
     contact_filter: bool = True
     teen_restrict: bool = True  # keep away after 2 reports
-    risk_mode: str = "test"              # Warning Signs: off, test or on
+    risk_mode: str = "on"                # Warning Signs: off, test or on
     risk_test_until: float | None = None
     tips_dm: bool = True                 # teens get the safety tips by DM, once
-    selfie_guard: bool = True  # selfie tip
     nick_check: bool = True  # nickname check
     alt_catcher: bool = True
     tips_channel_id: int | None = None   # where the safety tips were last posted
@@ -219,12 +214,12 @@ class GuildSettings:
 
 
 _COLS = ("staff_channel_id", "staff_role_id", "image_scan", "weekly_summary", "reminder_minutes",
-         "appeals", "report_updates", "panel_channel_id", "young_roles", "older_roles", "adult_roles",
+         "report_updates", "panel_channel_id", "young_roles", "older_roles", "adult_roles",
          "no_age_role", "contact_filter", "teen_restrict", "risk_mode", "risk_test_until", "tips_dm",
-         "selfie_guard", "nick_check", "alt_catcher", "tips_channel_id", "flirty_filter", "checkup_score",
+         "nick_check", "alt_catcher", "tips_channel_id", "flirty_filter", "checkup_score",
          "filter_languages", "age_check", "adult_channel_id", "trivia_channel_id", "network")
-_BOOLS = ("image_scan", "weekly_summary", "appeals", "report_updates", "contact_filter", "teen_restrict",
-          "tips_dm", "selfie_guard", "nick_check", "alt_catcher", "flirty_filter", "age_check", "network")
+_BOOLS = ("image_scan", "weekly_summary", "report_updates", "contact_filter", "teen_restrict",
+          "tips_dm", "nick_check", "alt_catcher", "flirty_filter", "age_check", "network")
 
 
 def get_settings(guild_id: int) -> GuildSettings:
@@ -236,7 +231,7 @@ def get_settings(guild_id: int) -> GuildSettings:
         setattr(s, name, getattr(s, name) is None or bool(getattr(s, name)))
     s.reminder_minutes = 5 if s.reminder_minutes is None else s.reminder_minutes
     s.no_age_role = s.no_age_role or "adult"
-    s.risk_mode = s.risk_mode or "test"
+    s.risk_mode = s.risk_mode or "on"
     s.filter_languages = s.filter_languages or "en"
     return s
 
@@ -256,7 +251,7 @@ def forget_guild(guild_id: int) -> None:
         _conn.execute(f"DELETE FROM {table} WHERE message_id IN (SELECT message_id FROM alerts WHERE guild_id=?)",
                       (guild_id,))
     # network_catches stay, see the table
-    for table in ("alerts", "appeals", "events", "guilds", "trivia_points", "network_alerts", "welcomes") + TEEN_TABLES:
+    for table in ("alerts", "events", "guilds", "trivia_points", "network_alerts", "welcomes") + TEEN_TABLES:
         _conn.execute(f"DELETE FROM {table} WHERE guild_id=?", (guild_id,))
     _conn.commit()
 
@@ -302,7 +297,6 @@ def purge_old() -> int:
     cur = _conn.execute("DELETE FROM events WHERE created_at < ?", (cutoff,))
     _conn.execute("DELETE FROM alerts WHERE created_at < ?", (cutoff,))
     _conn.execute("DELETE FROM alert_actions WHERE created_at < ?", (cutoff,))
-    _conn.execute("DELETE FROM appeals WHERE created_at < ?", (cutoff,))
     _conn.execute("DELETE FROM reporters WHERE created_at < ?", (cutoff,))
     _conn.execute("DELETE FROM teen_signals WHERE created_at < ?", (time.time() - SIGNAL_DAYS * 86400,))
     _conn.execute("DELETE FROM risk_flags WHERE flagged_at < ?", (time.time() - SIGNAL_DAYS * 86400,))
@@ -580,33 +574,6 @@ def staff_stats(guild_id: int, since: float) -> dict:
         (guild_id, since)).fetchone()[0]
     return {"staff": staff, "resolved": resolved, "opened": opened, "resolve_avg": resolve_avg, "claim_avg": claim_avg}
 
-
-# appeals
-
-def create_appeal(event_id: int, guild_id: int, user_id: int, text: str) -> bool:
-    cur = _conn.execute(
-        "INSERT OR IGNORE INTO appeals (event_id, guild_id, user_id, text, created_at) VALUES (?, ?, ?, ?, ?)",
-        (event_id, guild_id, user_id, text[:1000], time.time()))
-    _conn.commit()
-    return cur.rowcount == 1
-
-
-def get_appeal(event_id: int) -> dict | None:
-    row = _conn.execute("SELECT guild_id, user_id, text, status, decided_by FROM appeals WHERE event_id=?",
-                        (event_id,)).fetchone()
-    return dict(zip(("guild_id", "user_id", "text", "status", "decided_by"), row)) if row else None
-
-
-def decide_appeal(event_id: int, status: str, mod_id: int) -> bool:
-    cur = _conn.execute("UPDATE appeals SET status=?, decided_by=? WHERE event_id=? AND status='pending'",
-                        (status, mod_id, event_id))
-    _conn.commit()
-    return cur.rowcount == 1
-
-
-def delete_appeal(event_id: int) -> None:
-    _conn.execute("DELETE FROM appeals WHERE event_id=?", (event_id,))
-    _conn.commit()
 
 
 # removing records

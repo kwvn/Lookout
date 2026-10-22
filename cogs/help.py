@@ -129,6 +129,10 @@ class Help(commands.Cog):
             view = tips_message()
             await interaction.response.send_message(view=view, files=ui_kit.files(view), ephemeral=True,
                                                     allowed_mentions=discord.AllowedMentions.none())
+        elif cid.startswith("lkappeal:"):  # Appeal buttons on old warnings, appeals were removed
+            await interaction.response.send_message(view=ui_kit.note(
+                "Appeals through Lookout were turned off. Think a warning was a mistake? Talk to the server's mods."),
+                ephemeral=True)
         elif cid == "lkhelp:threat":
             await interaction.response.send_message(view=threat_help(), ephemeral=True,
                                                     allowed_mentions=discord.AllowedMentions.none())

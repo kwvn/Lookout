@@ -290,7 +290,7 @@ class Demo(commands.Cog):
             ("Warning Signs · #15", "**Several warning signs added up for User:**\n"
                                     "- Sent an inappropriate message to a teen · 2 times\n"
                                     "- Sent contact info to a teen · 1 time\n"
-                                    "-# One sign never flags anyone · The first week is a test only admins see"),
+                                    "-# One sign never flags anyone"),
             ("Keep Away After 2 Reports", "If 2 teens report User, their replies to teens get removed until the mods "
                                           "press **Lift** or **Keep**.\n-# Teens who joined this week or have a new "
                                           "account don't count."),
@@ -303,7 +303,6 @@ class Demo(commands.Cog):
                                          scopes=("bot", "applications.commands"))
         more = "\n".join([
             "- Inappropriate images are removed from chat",
-            "- Warned members can appeal from the DM",
             "- Reporters hear back when their case is closed",
             "- A Safety Checkup for your server's own settings",
         ])

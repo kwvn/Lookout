@@ -84,17 +84,14 @@ def _find_value(components, custom_id):
 async def send_warning(guild: discord.Guild, mod: discord.Member, target: discord.Member,
                        reason: str, channel_id: int | None) -> str:
     count = db.count_kind(guild.id, target.id, "staff_warn") + 1
-    warning_id = db.log(guild.id, target.id, "staff_warn", reason, channel_id, mod.id)
+    db.log(guild.id, target.id, "staff_warn", reason, channel_id, mod.id)
     icon_file = discord.File(WARNING_ICON, filename="warning.png") if WARNING_ICON.exists() else None
-    appeals = db.get_settings(guild.id).appeals
     dm = ui_kit.card("You Got a Warning",
                      ("Reason", discord.utils.escape_markdown(reason)),
                      subtitle=f"From the mods of {discord.utils.escape_markdown(guild.name)}",
                      thumbnail="attachment://warning.png" if icon_file else None,
-                     footer=f"This is warning #{count}. More warnings can lead to a timeout."
-                            + (" Think it's a mistake? Press Appeal." if appeals else ""),
-                     buttons=[discord.ui.Button(label="Appeal", custom_id=f"lkappeal:open:{guild.id}:{warning_id}")]
-                     if appeals else None)
+                     footer=f"This is warning #{count}. More warnings can lead to a timeout. Think it's a "
+                            "mistake? Talk to the mods.")
     try:
         await target.send(view=dm, files=[icon_file] if icon_file else [])
         delivered = ""

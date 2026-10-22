@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("lookout")
 
 EXTENSIONS = ["cogs.setup", "cogs.help", "cogs.demo", "cogs.staff", "cogs.cases", "cogs.cleanup",
-              "cogs.reports", "cogs.reminder", "cogs.appeals", "cogs.summary", "cogs.imagescan", "cogs.teensafety",
+              "cogs.reports", "cogs.reminder", "cogs.summary", "cogs.imagescan", "cogs.teensafety",
               "cogs.totals", "cogs.trivia", "cogs.network", "cogs.joinlog"]
 # rotates every few minutes
 STATUSES = ["Always on watch", "On watch · /help", "Keeping teens safe", "Guarding {servers}"]

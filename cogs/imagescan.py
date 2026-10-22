@@ -20,8 +20,6 @@ log = logging.getLogger("lookout.images")
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
 NSFW_CLASSES = {"FEMALE_BREAST_EXPOSED", "FEMALE_GENITALIA_EXPOSED", "MALE_GENITALIA_EXPOSED",
                 "ANUS_EXPOSED", "BUTTOCKS_EXPOSED"}
-FACE_CLASSES = {"FACE_FEMALE", "FACE_MALE"}
-FACE_MIN = 0.5
 MAX_GIF_FRAMES = 6
 MAX_LINKS = 4  # linked images checked per message
 GIF_PICKER = ("tenor.com", "giphy.com")  # discord's gif picker, already filtered on their side
@@ -34,8 +32,8 @@ class ImageScan(commands.Cog):
         self._detector = None
         self._lock = threading.Lock()
 
-    # (nsfw score, face score)
-    def _score(self, data: bytes) -> tuple[float, float]:
+    # how sure it is that something explicit is in the picture, 0 to 1
+    def _score(self, data: bytes) -> float:
         with self._lock:
             if self._detector is None:
                 from nudenet import NudeDetector
@@ -44,7 +42,7 @@ class ImageScan(commands.Cog):
             img.draft("RGB", (1280, 1280))  # way faster for big jpegs
             # seek instead of collecting frames, pillow reuses the same image object
             frames = getattr(img, "n_frames", 1)
-            best, face = 0.0, 0.0
+            best = 0.0
             for i in range(0, frames, max(1, frames // MAX_GIF_FRAMES))[:MAX_GIF_FRAMES]:
                 img.seek(i)
                 rgb = img.convert("RGB")
@@ -53,9 +51,7 @@ class ImageScan(commands.Cog):
                 for d in self._detector.detect(bgr):
                     if d["class"] in NSFW_CLASSES:
                         best = max(best, d["score"])
-                    elif d["class"] in FACE_CLASSES:
-                        face = max(face, d["score"])
-            return best, face
+            return best
 
     async def _fetch(self, url: str) -> bytes:
         limit = config.MAX_IMAGE_MB * 1024 * 1024
@@ -67,6 +63,14 @@ class ImageScan(commands.Cog):
                 if len(data) > limit:
                     raise ValueError("too big")
         return data
+
+    # with no age roles set up there's no telling, so everything counts
+    @staticmethod
+    def _teens_can_see(channel, s: db.GuildSettings) -> bool:
+        guild = channel.guild
+        roles = [r for r in (guild.get_role(i) for i in s.role_ids("young_roles") | s.role_ids("older_roles")) if r]
+        roles = roles or ([guild.default_role] if s.teen_default else [])
+        return not roles or any(channel.permissions_for(r).view_channel for r in roles)
 
     # a pasted image link shows up as a preview. goes through discord's media proxy, not the site itself
     @staticmethod
@@ -91,13 +95,12 @@ class ImageScan(commands.Cog):
                     if ((a.content_type or "").startswith("image/") or a.filename.lower().endswith(IMAGE_EXTS))
                     and a.size <= config.MAX_IMAGE_MB * 1024 * 1024]
         own = pictures(message.attachments)
-        # forwards keep their images in message_snapshots. scan those too, but no selfie tip for them
+        # forwards keep their images in message_snapshots, scan those too
         forwarded = pictures(a for snap in getattr(message, "message_snapshots", None) or [] for a in snap.attachments)
-        # (name, read, posted by them)
-        sources = [(a.filename, a.read, True) for a in own] + [(a.filename, a.read, False) for a in forwarded]
-        sources += [(st.name, st.read, False) for st in message.stickers
-                    if st.format != discord.StickerFormatType.lottie]
-        sources += [(url, partial(self._fetch, url), False) for url in self._linked(message)]
+        # (name, read)
+        sources = [(a.filename, a.read) for a in own + forwarded]
+        sources += [(st.name, st.read) for st in message.stickers if st.format != discord.StickerFormatType.lottie]
+        sources += [(url, partial(self._fetch, url)) for url in self._linked(message)]
         if sources:
             await self._scan(message, sources, forwarded=bool(forwarded) and not own)
 
@@ -109,36 +112,29 @@ class ImageScan(commands.Cog):
         seen = set(self._linked(before))
         new = [url for url in self._linked(after) if url not in seen]
         if new:
-            await self._scan(after, [(url, partial(self._fetch, url), False) for url in new])
+            await self._scan(after, [(url, partial(self._fetch, url)) for url in new])
 
     async def _scan(self, message: discord.Message, sources: list, forwarded: bool = False) -> None:
         s = db.get_settings(message.guild.id)
-        if not s.configured or getattr(message.channel, "is_nsfw", lambda: False)():
+        if not (s.configured and s.image_scan) or getattr(message.channel, "is_nsfw", lambda: False)():
             return  # nsfw channels are fine
+        if not self._teens_can_see(message.channel, s):
+            return  # less work for the host, and fewer false alarms where teens can't go anyway
         author = message.author
         teens = self.bot.get_cog("TeenSafety")
         teen = bool(s.teen_safety and teens and isinstance(author, discord.Member) and teens.is_teen(author, s))
-        selfie = teen and s.selfie_guard
-        if not s.image_scan:  # only the selfie tip is on, so only their own uploads matter
-            sources = [src for src in sources if src[2]] if selfie else []
-        if not sources:
-            return
 
-        worst, face = 0.0, 0.0
-        for name, read, mine in sources:
+        worst = 0.0
+        for name, read in sources:
             try:
-                score, f = await asyncio.to_thread(self._score, await read())
+                score = await asyncio.to_thread(self._score, await read())
             except Exception as e:
                 log.warning("Could not scan %s: %s", name[:120], e)
                 continue
-            if mine:
-                face = max(face, f)
             worst = max(worst, score)
             if worst >= config.NSFW_THRESHOLD:
                 break
-        if not s.image_scan or worst < config.NSFW_THRESHOLD:
-            if selfie and face >= FACE_MIN:
-                await teens.teen_photo(message)
+        if worst < config.NSFW_THRESHOLD:
             return
 
         try:
@@ -148,8 +144,9 @@ class ImageScan(commands.Cog):
             deleted = False
 
         db.log(message.guild.id, author.id, "image_flagged", f"Inappropriate image ({worst:.0%} sure)", message.channel.id)
+        dm_ok = True
         if deleted and teen:  # no callout in chat for a teen, a private message instead
-            await self._support_dm(message)
+            dm_ok = await self._support_dm(message)
         elif deleted:
             try:
                 await message.channel.send(view=ui_kit.note(f"{author.mention}, your image was removed by Lookout's "
@@ -167,6 +164,8 @@ class ImageScan(commands.Cog):
         if teen:
             what += ("\n**Posted by a teen.** It may be a picture of themselves. Don't save or share it, not even to "
                      "report it. Talk to them privately and report it to Discord.")
+            if not dm_ok:
+                what += "\n-# Couldn't DM them, their DMs are closed. Check in with them another way."
         if message.content:
             what += f"\n-# Sent with it: {ui_kit.hidden(message.content, 200)}"
         voice = author.voice.channel.id if isinstance(author, discord.Member) and author.voice else None
@@ -191,7 +190,7 @@ class ImageScan(commands.Cog):
 
     # a teen's picture got removed. kind, no blame, and help if someone pushed them into it
     @staticmethod
-    async def _support_dm(message: discord.Message) -> None:
+    async def _support_dm(message: discord.Message) -> bool:
         view = ui_kit.card(
             ui_kit.titled("warning", "Your Picture Was Removed"),
             f"Lookout removed a picture you posted in {message.channel.mention}. Nobody in the chat was told why. The "
@@ -205,8 +204,9 @@ class ImageScan(commands.Cog):
                      discord.ui.Button(label="Someone's Threatening Me", custom_id="lkhelp:threat")])
         try:
             await message.author.send(view=view, allowed_mentions=discord.AllowedMentions.none())
+            return True
         except discord.HTTPException:
-            pass    # DMs closed
+            return False    # DMs closed
 
 
 async def setup(bot):

@@ -397,6 +397,8 @@ class TeenSafety(commands.Cog):
             if await self._remove(message, f"Your message in {where} was removed. This server doesn't allow sending "
                                            "contact info to members under 18."):
                 db.bump("contact")
+                for teen in teens:
+                    await self._heads_up(message, author, teen, contact=True)
         await self._check_risk(guild, author, s)
 
     @commands.Cog.listener()
@@ -515,7 +517,7 @@ class TeenSafety(commands.Cog):
             db.bump("filter_alerts")
 
     async def _heads_up(self, message: discord.Message, adult: discord.Member, teen: discord.Member,
-                        threat: bool = False) -> None:
+                        threat: bool = False, contact: bool = False) -> None:
         if not self._once(("headsup", message.guild.id, adult.id, teen.id)):
             return
         how = ("replied to you" if message.reference else "mentioned you" if teen in message.mentions
@@ -536,10 +538,12 @@ class TeenSafety(commands.Cog):
                          discord.ui.Button(label="Someone's Threatening Me", custom_id="lkhelp:threat"),
                          ui_kit.block_button()])
         else:
+            what = ("their contact info. Adults sharing socials or numbers with teens isn't allowed here, so Lookout "
+                    "removed it." if contact else "something that wasn't okay, so Lookout removed it. The mods know "
+                                                "about it.")
             view = ui_kit.card(
                 ui_kit.titled("warning", "A Message to You Was Removed"),
-                f"**@{name}** {how} in {message.channel.mention} with something that wasn't okay, so Lookout removed "
-                "it. The mods know about it.",
+                f"**@{name}** {how} in {message.channel.mention} with {what}",
                 ("Good to Know", "**You didn't do anything wrong.** You don't have to reply, and it's okay to block "
                                  "them.\n-# Want to add something? Press **Tell the Mods**. They won't say it was you."),
                 ("If They DM You", "You can report that to the mods too. Add Lookout to your apps, then right-click the "
@@ -550,7 +554,16 @@ class TeenSafety(commands.Cog):
         try:
             await teen.send(view=view, allowed_mentions=discord.AllowedMentions.none())
         except discord.HTTPException:
-            pass
+            if not contact:  # contact info has no case to note it on
+                await self._dm_failed(message.guild, adult.id, teen.id)
+
+    # DMs closed: say so on the case, so the mods know the teen didn't get the heads-up
+    async def _dm_failed(self, guild: discord.Guild, adult_id: int, teen_id: int) -> None:
+        recent = self._flirty_cases.get((guild.id, adult_id))
+        case = db.case_by_message(recent[0]) if recent else None
+        if case:
+            await self._note_on_case(guild, case, f"-# Couldn't DM <@{teen_id}>, their DMs are closed. Check in "
+                                                  "with them another way.")
 
     # a threat to share pictures, or asking for nudes, sent to a teen by someone who isn't an adult here
     # (adults go through on_message)
@@ -723,26 +736,6 @@ class TeenSafety(commands.Cog):
         except discord.HTTPException:
             pass
 
-    # selfie tip
-
-    async def teen_photo(self, message: discord.Message) -> None:
-        guild, teen = message.guild, message.author
-        if not self._once(("photo", guild.id, teen.id), 86400):
-            return
-        name = discord.utils.escape_markdown(guild.name)
-        flirty = db.get_settings(guild.id).flirty_filter
-        view = ui_kit.card(
-            ui_kit.titled(ui_kit.mascot("watching", "warning"), "Your Photo Is Public"),
-            f"You posted a photo in {message.channel.mention}. Everyone in **{name}** can see it and save it.",
-            ("Good to Know", ("If an adult replies with something inappropriate, Lookout removes it and tells the "
-                              "mods.\n" if flirty else "") + "Changed your mind? Hover over the message, press the "
-                                                            "three dots, then **Delete Message**."),
-            subtitle=f"From {name}", footer="You'll get this tip once a day at most.")
-        try:
-            await teen.send(view=view, allowed_mentions=discord.AllowedMentions.none())
-        except discord.HTTPException:
-            pass
-
     # members who leave during a case
 
     # no members intent so we can't see leaves, check the people we care
@@ -910,7 +903,7 @@ class TeenSafety(commands.Cog):
                          [("member", "Who", info), ("warning", "Why Lookout Thinks So", "\n".join(f"- {w}" for w in why))],
                          footer="Take a look before acting. Keep Away From Teens gives the new account the same "
                                 "restriction.",
-                         buttons=buttons, urgent=True, thumbnail=member.display_avatar.url)
+                         buttons=buttons, thumbnail=member.display_avatar.url)  # a guess, so no ping
 
     # lookout network. only removed replies and mentions count (not "nearby"), never anything a mod does,
     # and only from servers that have had lookout a while, so a server made yesterday can't put anyone on it

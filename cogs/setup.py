@@ -30,7 +30,6 @@ PROTECTIONS = [
     ("teen_restrict", "Keep Away After 2 Reports", "If 2 teens report the same adult, their replies to teens get "
                                                    "removed until the mods decide. Teens who joined this week or have "
                                                    "a new account don't count."),
-    ("selfie_guard", "Selfie Tip", "Teens get a tip when they post a photo of themselves in public."),
     ("nick_check", "Nickname Check", "Teens get a tip when their nickname shows their age, school or city."),
     ("tips_dm", "Safety Tips DM", "Teens get the safety tips once, the first time Lookout sees them."),
     ("alt_catcher", "Alt Catcher", "Lets the mods know when someone who left during a case is back on a new account."),
@@ -40,14 +39,14 @@ TOGGLES = {name: (title, text) for name, title, text in PROTECTIONS} | {
                                    "teens in other servers shows up here. Turning it off also stops sharing."),
     "age_check": ("Age Mismatch", "Lets the mods know when someone says an age that doesn't match their age role."),
     "report_updates": ("Reporter Updates", "Reporters get a DM when the mods close their case."),
-    "appeals": ("Appeals", "Warned members can appeal from the warning DM."),
-    "image_scan": ("Image Filter", "Removes inappropriate images as soon as they're posted."),
+    "image_scan": ("Image Filter", "Removes inappropriate images in channels teens can see, as soon as they're "
+                                   "posted."),
     "weekly_summary": ("Weekly Summary", "Posts the week's numbers in the mod channel every Monday."),
 }
 PAGE_OF = {"filter_languages": "langs", "staff_channel": "staff", "staff_role": "staff", "reminder": "staff",
            "young_roles": "ages", "adult_roles": "ages", "no_age_role": "ages", "age_check": "ages", "age_mode": "ages",
            "adult_button": "ages",
-           "post_panel": "reports", "post_tips": "reports", "report_updates": "reports", "appeals": "reports",
+           "post_panel": "reports", "post_tips": "reports", "report_updates": "reports",
            "image_scan": "extras", "weekly_summary": "extras", "trivia_channel": "extras", "network": "extras"}
 # channel names that look like dating or rating each other's looks, for the Safety Checkup
 DATING = re.compile(r"dating|e-?date|couples?|selfies?|rate-?me|smash-?or-?pass|hot-?or-?not|lf-?(?:bf|gf)|"
@@ -149,7 +148,6 @@ def home(guild: discord.Guild, s: db.GuildSettings, note: str | None = None):
         ("Report Button", f"Posted in <#{s.panel_channel_id}>" if s.panel_channel_id else "Not posted yet"),
         ("Safety Tips", f"Posted in <#{s.tips_channel_id}>" if s.tips_channel_id else "Not posted yet"),
         ("Reporter Updates", "On" if s.report_updates else "Off"),
-        ("Appeals", "On" if s.appeals else "Off"),
     ])
     perms, ok = permission_report(guild, s)
     if s.checkup_score is None:
@@ -359,7 +357,7 @@ def reports_page(guild, s: db.GuildSettings):
                  ("Report Button", [where + "\n-# Members press it to report a problem without typing a command.",
                                     post]),
                  ("Safety Tips", [tips_where + "\n-# Safety tips for teens, with a Report a Problem button.", tips]),
-                 ("After a Report", [_toggle(s, "report_updates"), _toggle(s, "appeals")]),
+                 ("After a Report", [_toggle(s, "report_updates")]),
                  buttons=[_button("Back", "page", "home")])
 
 
