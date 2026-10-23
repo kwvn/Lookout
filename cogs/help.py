@@ -20,8 +20,8 @@ TIPS = [
                           "over your account."),
     ("If Something Feels Off", "Leave the chat or call. You don't owe anyone a reply.\n"
                                "-# If Discord warns you about a friend request, there's a reason. You can ignore it."),
-    ("It's Never Your Fault", "Talk to an adult you trust. You won't get in trouble for someone else's choices. "
-                              "Take It Down can help remove pictures of you."),
+    ("It's Never Your Fault", "Talk to an adult you trust. You won't get in trouble for someone else's choices.\n"
+                              "Going through something hard? You can talk to someone for free, any time."),
 ]
 
 
@@ -35,10 +35,7 @@ def tips_message(banner: bool = True) -> discord.ui.LayoutView:
         "If Something Feels Off": [discord.ui.Button(label="Report a Problem", custom_id="lkreport:open")]
                                   + ([add_app] if add_app else []),
         "It's Never Your Fault": [discord.ui.Button(label="Someone's Threatening Me", custom_id="lkhelp:threat"),
-                                  discord.ui.Button(label="Report to Discord", style=link, url="https://dis.gd/request"),
-                                  discord.ui.Button(label="Take It Down", style=link,
-                                                    url="https://takeitdown.ncmec.org"),
-                                  discord.ui.Button(label="Safety Center", style=link, url=ui_kit.SAFETY_CENTER_URL)],
+                                  discord.ui.Button(label="Find a Helpline", style=link, url=ui_kit.HELPLINE_URL)],
     }
     for title, text in TIPS:
         if title == "If Something Feels Off" and add_app:

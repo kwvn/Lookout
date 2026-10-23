@@ -14,6 +14,7 @@ ICONS: dict[str, str] = {}
 # discord help pages
 BLOCK_URL = "https://support.discord.com/hc/en-us/articles/217916488"
 SAFETY_CENTER_URL = "https://discord.com/safety"
+HELPLINE_URL = "https://discord.findahelpline.com"  # discord's helpline finder, every country
 
 # set on startup. USER_INSTALL means user installs are on in the dev portal (needed for DM reports)
 APP_ID: int | None = None
