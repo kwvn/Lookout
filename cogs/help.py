@@ -115,9 +115,11 @@ class Help(commands.Cog):
         items.append(("warning", ui_kit.titled(looky("love"), "Safety Tips"), "Tips for staying safe on Discord.",
                       [discord.ui.Button(label="Safety Tips", custom_id="lkhelp:tips"),
                        discord.ui.Button(label="See a Demo", custom_id="lkhelp:demo")]))
-        items.append(("help", ui_kit.titled(looky("thumbsup"), "Your Privacy"),
-                      "What Lookout keeps and how long it keeps it.",
-                      [discord.ui.Button(label="Privacy Policy", style=discord.ButtonStyle.link,
+        items.append(("help", ui_kit.titled(looky("thumbsup"), "Need Help?"),
+                      "Questions or something not working? Ask us in the support server.\n"
+                      "-# The Privacy Policy says what Lookout keeps and how long it keeps it.",
+                      [discord.ui.Button(label="Support Server", style=discord.ButtonStyle.link, url=config.SUPPORT_URL),
+                       discord.ui.Button(label="Privacy Policy", style=discord.ButtonStyle.link,
                                          url=config.PRIVACY_URL)]))
         view = ui_kit.boxes("Help", "What Lookout does in this server", items, icon="help")
         await interaction.response.send_message(view=view, files=ui_kit.files(view), ephemeral=True)
