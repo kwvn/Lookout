@@ -2,6 +2,8 @@ import asyncio
 import datetime as dt
 import io
 import logging
+import math
+import re
 
 import discord
 from discord import app_commands
@@ -15,8 +17,29 @@ from cogs.cleanup import history_controls
 
 log = logging.getLogger("lookout.staff")
 PREFIX = "lookout"
-# same options as discord's own timeout menu
+# same options as discord's own timeout menu, plus Custom
 TIMEOUTS = [(1, "60 seconds"), (5, "5 minutes"), (10, "10 minutes"), (60, "1 hour"), (1440, "1 day"), (10080, "1 week")]
+MAX_TIMEOUT = 40320  # discord's limit, 28 days in minutes
+_UNITS = {"s": 1 / 60, "m": 1, "h": 60, "d": 1440, "w": 10080}
+_LINK = re.compile(r"https://(?:ptb\.|canary\.)?discord(?:app)?\.com/channels/(\d+)/(\d+)/(\d+)")
+
+
+# "3h", "2d", "1d 12h", "45" (minutes) to minutes. 0 if it can't be read
+def parse_length(text: str) -> int:
+    text = text.lower().replace(" ", "")
+    parts = re.findall(r"(\d+)([smhdw]?)", text)
+    if not parts or re.sub(r"\d+[smhdw]?", "", text):
+        return 0
+    return math.ceil(sum(int(n) * _UNITS[u or "m"] for n, u in parts))
+
+
+def length_label(minutes: int) -> str:
+    out = []
+    for size, name in ((10080, "week"), (1440, "day"), (60, "hour"), (1, "minute")):
+        n, minutes = divmod(minutes, size)
+        if n:
+            out.append(f"{n} {name}{'' if n == 1 else 's'}")
+    return " ".join(out[:2]) or "1 minute"
 
 WARNING_ICON = config.ASSETS / "warning.png"
 
@@ -32,6 +55,7 @@ LABELS = {
     "teen_role_switch": "Switched to a teen role", "teen_restricted": "Kept away from teens",
     "teen_unrestricted": "No longer kept away from teens", "teen_photo_reply": "Reply to a teen's photo removed",
     "teen_left": "Left during a case", "teen_flirty": "Inappropriate message to a teen removed",
+    "staff_proofsubmit": "Proof added to a case",
 }
 
 
@@ -61,6 +85,7 @@ def action_buttons(guild_id: int, channel_id: int | None, member_id: int | None,
         ui_kit.add_action(items, "Time Out", "Mute them for a while", _cid("timeout", member_id, c))
         if voice:
             ui_kit.add_action(items, "Disconnect", "Take them out of the voice channel", _cid("disconnect", member_id, c))
+    ui_kit.add_action(items, "Add Proof", "Add a message link or a note to this case", _cid("proof", member_id, c))
     return items
 
 
@@ -155,7 +180,8 @@ class Staff(commands.Cog):
                 return await self._stamp(interaction, alert_id, f"-# {mod.mention} unclaimed this · <t:{now}:R>",
                                          claim=False)
             return await self._reply(interaction, f"<@{claim[0]}> already claimed this one.")
-        if claim and claim[0] != mod.id and not admin:
+        # any mod can add proof, even to a case someone else claimed
+        if claim and claim[0] != mod.id and not admin and action not in ("proof", "proofsubmit"):
             return await self._reply(interaction, f"<@{claim[0]}> claimed this alert, so only they can act on it.")
 
         if action == "pick":
@@ -166,15 +192,45 @@ class Staff(commands.Cog):
             return await self._reply(interaction, "Someone already resolved this one.")
         if action in CLOSE_ACTIONS:
             modal = discord.ui.Modal(title="Resolve Alert", custom_id=_cid("resolvesubmit", member_id, channel_id, alert_id))
-            modal.add_item(discord.ui.TextInput(label="What did you do?", custom_id="note",
+            modal.add_item(discord.ui.TextInput(label="What did you do? (only mods see this)", custom_id="note",
                                                 style=discord.TextStyle.paragraph, min_length=3, max_length=500,
                                                 placeholder="Like: Joined the voice channel and saw it myself. Warned "
                                                             "them and timed them out for 1 hour."))
+            # only when someone reported it and the server sends reporter updates
+            if db.has_reporters(alert_id) and db.get_settings(guild.id).report_updates:
+                modal.add_item(discord.ui.TextInput(label="Tell the reporter (optional)", custom_id="reporter",
+                                                    style=discord.TextStyle.paragraph, required=False, max_length=300,
+                                                    placeholder="Like: We took care of it. Thanks for letting us know!"))
             return await interaction.response.send_modal(modal)
         if action == "resolvesubmit":
             if claim is None:
                 db.set_claim(guild.id, alert_id, mod.id, mod.display_name)
             return await self._resolve(interaction, alert_id, mod, data)
+
+        if action == "proof":
+            modal = discord.ui.Modal(title="Add Proof", custom_id=_cid("proofsubmit", member_id, channel_id, alert_id))
+            modal.add_item(discord.ui.TextInput(label="Message link (optional)", custom_id="link", required=False,
+                                                max_length=200, placeholder="https://discord.com/channels/…"))
+            modal.add_item(discord.ui.TextInput(label="Note", custom_id="note", style=discord.TextStyle.paragraph,
+                                                required=False, max_length=300,
+                                                placeholder="Like: Said the same thing in #general 10 minutes later"))
+            return await interaction.response.send_modal(modal)
+        if action == "proofsubmit":
+            if db.is_resolved(alert_id):
+                return await self._reply(interaction, "This case is already resolved.")
+            link = (_find_value(data.get("components"), "link") or "").strip()
+            note = (_find_value(data.get("components"), "note") or "").strip()
+            m = _LINK.fullmatch(link) if link else None
+            if link and not m:
+                return await self._reply(interaction, "That isn't a message link. Right-click the message > **Copy Message Link**.")
+            if m and int(m.group(1)) != guild.id:
+                return await self._reply(interaction, "That message is from another server.")
+            if not link and not note:
+                return await self._reply(interaction, "Add a message link, a note, or both.")
+            parts = ([f"[Jump to message](<{link}>)"] if link else []) + \
+                ([f"\"{discord.utils.escape_mentions(discord.utils.escape_markdown(note))}\""] if note else [])
+            result = "added proof: " + " · ".join(parts)
+            return await self._record(interaction, guild, mod, alert_id, claim, member_id, channel_id, action, result, now)
 
         if action == "delmsg":  # Delete Message button
             channel = guild.get_channel(channel_id)
@@ -196,9 +252,23 @@ class Staff(commands.Cog):
         if action == "timeout" and not extra:
             buttons = [discord.ui.Button(label=label, custom_id=_cid("timeout", member_id, channel_id, alert_id, str(m)))
                        for m, label in TIMEOUTS]
+            custom = discord.ui.Button(label="Custom…", custom_id=_cid("timeout", member_id, channel_id, alert_id, "custom"))
             view = ui_kit.card(f"Timeout {target.display_name}", "How long should the timeout last?",
-                               buttons=buttons[:3] + [None] + buttons[3:])
+                               buttons=buttons[:3] + [None] + buttons[3:] + [None, custom])
             return await interaction.response.send_message(view=view, ephemeral=True)
+        if action == "timeout" and extra == "custom":
+            modal = discord.ui.Modal(title=f"Timeout {target.display_name}"[:45],
+                                     custom_id=_cid("timeoutsubmit", member_id, channel_id, alert_id))
+            modal.add_item(discord.ui.TextInput(label="How long?", custom_id="length", max_length=20,
+                                                placeholder="Like 3h, 2d or 45m. Up to 28 days."))
+            return await interaction.response.send_modal(modal)
+        if action == "timeoutsubmit":
+            minutes = parse_length(_find_value(data.get("components"), "length") or "")
+            if not minutes:
+                return await self._reply(interaction, "Lookout didn't get that. Try something like **3h**, **2d** or **45m**.")
+            if minutes > MAX_TIMEOUT:
+                return await self._reply(interaction, "Discord's limit is **28 days**. Try a shorter one.")
+            action, extra = "timeout", str(minutes)
 
         if action == "warn":
             modal = discord.ui.Modal(title=f"Warn {target.display_name}"[:45],
@@ -224,7 +294,7 @@ class Staff(commands.Cog):
         new_claim = None
         if alert_id:
             db.add_alert_action(alert_id, result)
-            if claim is None:  # doing something claims it
+            if claim is None and action != "proofsubmit":  # doing something claims it, adding proof doesn't
                 db.set_claim(guild.id, alert_id, mod.id, mod.display_name)
                 new_claim = (mod.id, mod.display_name)
         await self._stamp(interaction, alert_id, f"-# {mod.mention} {result} · <t:{now}:R>", claim=new_claim)
@@ -241,9 +311,9 @@ class Staff(commands.Cog):
                 await self._reply(interaction, "You need the **Timeout Members** permission for this.")
                 return None
             minutes = int(extra) if extra.isdigit() else 10
-            minutes = max(1, min(minutes, 40320))  # discord max is 28 days
+            minutes = max(1, min(minutes, MAX_TIMEOUT))
             await target.timeout(dt.timedelta(minutes=minutes), reason=reason)
-            label = next((l for m, l in TIMEOUTS if m == minutes), f"{minutes}m")
+            label = next((l for m, l in TIMEOUTS if m == minutes), length_label(minutes))
             return f"timed out {target.mention} for {label}"
         if action == "untimeout":
             if not mod.guild_permissions.moderate_members:
@@ -264,6 +334,7 @@ class Staff(commands.Cog):
 
     async def _resolve(self, interaction, alert_id, mod, data):
         note = (_find_value(data.get("components"), "note") or "").strip() or "No details given."
+        told = (_find_value(data.get("components"), "reporter") or "").strip()[:300]
         actions = db.alert_actions(alert_id)
         guild = interaction.guild
         db.log(guild.id, None, "staff_resolve", note, None, mod.id)
@@ -273,7 +344,9 @@ class Staff(commands.Cog):
             reports.close_case(alert_id)
         reporters = db.take_reporters(alert_id)
         if reporters and db.get_settings(guild.id).report_updates:
-            self.bot.loop.create_task(self._tell_reporters(guild, reporters, skip=mod.id))
+            self.bot.loop.create_task(self._tell_reporters(guild, reporters, skip=mod.id, message=told))
+        else:
+            told = ""
 
         try:
             msg = await interaction.channel.fetch_message(alert_id)
@@ -287,6 +360,7 @@ class Staff(commands.Cog):
             ("Handled By", f"{mod.mention}, in {took_txt}"),
             ("Actions Taken", done),
             ("What They Did", discord.utils.escape_markdown(note)),
+            ("Told the Reporter", discord.utils.escape_markdown(told) if told else None),
         ])
 
         view = discord.ui.LayoutView.from_message(msg, timeout=None)
@@ -311,9 +385,11 @@ class Staff(commands.Cog):
             await msg.edit(view=view, allowed_mentions=discord.AllowedMentions.none())
             await self._reply(interaction, "Alert resolved.")
 
-    async def _tell_reporters(self, guild: discord.Guild, reporters: list[int], skip: int):
+    # message: what the mod wrote for the reporter, if anything. which mod handled it is never shown
+    async def _tell_reporters(self, guild: discord.Guild, reporters: list[int], skip: int, message: str = ""):
         view = ui_kit.card("Your Report Was Reviewed",
                            "The mods looked at your report and closed the case. Thanks for reporting it.",
+                           ("From the mods", discord.utils.escape_mentions(message)) if message else None,
                            subtitle=f"From the mods of {discord.utils.escape_markdown(guild.name)}")
         for user_id in reporters:
             if user_id == skip:

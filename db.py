@@ -552,6 +552,10 @@ def add_reporter(message_id: int, user_id: int) -> None:
     _conn.commit()
 
 
+def has_reporters(message_id: int) -> bool:
+    return _conn.execute("SELECT 1 FROM reporters WHERE message_id=? LIMIT 1", (message_id,)).fetchone() is not None
+
+
 def take_reporters(message_id: int) -> list[int]:
     ids = [r[0] for r in _conn.execute("SELECT user_id FROM reporters WHERE message_id=?", (message_id,))]
     _conn.execute("DELETE FROM reporters WHERE message_id=?", (message_id,))
