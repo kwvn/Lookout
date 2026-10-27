@@ -36,6 +36,7 @@ NEARBY_MESSAGES = 5
 REPORTER_DAYS = 7  # a teen's report only counts toward Keep Away after a week in the server
 NETWORK_JOINED_DAYS = 14  # a server only shares with the lookout network after having lookout this long
 NETWORK_MEMBERS = 50  # and with at least this many members
+MIN_SIGNUP_AGE = 9  # almost nobody makes an account younger, so an older account than that allows isn't a teen's
 
 # nickname info. cities only count next to an age or school, never as the first word (Austin, Dallas...)
 # "mia 14" and "14yo" are ages, "Sniper13" isn't
@@ -260,6 +261,7 @@ class TeenSafety(commands.Cog):
         self._flirty_cases: dict[tuple[int, int], tuple[int, float, int, int]] = {}
         self._tasks: set[asyncio.Task] = set()
         self._adults: dict[int, set[int]] = {}  # pressed the 18+ button, per server
+        self._aged: set[tuple[int, int]] = set()  # account age checked since restart
         self.leave_check.start()
 
     def cog_unload(self):
@@ -343,6 +345,10 @@ class TeenSafety(commands.Cog):
         if mine != ADULT and s.flirty_filter and has_nude_ask(text):
             return await self._from_anyone(message, author, s, threat=False)
 
+        # probably not a teen (said an adult age, account too old, on the network): checked like an adult from here.
+        # messages to them still count as messages to a teen
+        if mine == TEEN and await self._fake_teen(author, s):
+            mine = ADULT
         if mine == TEEN:
             if s.contact_filter and has_contact(text, own=True):
                 if await self._remove(message, f"Your message in {message.channel.mention} had contact info in it, so "
@@ -704,8 +710,9 @@ class TeenSafety(commands.Cog):
                           "request, there's a reason. You can ignore it."),
             ("If Something Feels Off", "Type **/report** in the server, or right-click them, then **Apps** > **Report "
                                        "to Mods**. Only the mods see it."
-                                       + ("\n-# Got a DM that's not okay? Add Lookout to your apps, then right-click "
-                                          "it > **Apps** > **Report Message to Mods**." if add_app else "")),
+                                       + ("\n-# Not sure about a DM? Add Lookout to your apps, then right-click it > "
+                                          "**Apps** > **Is this safe?** or **Report Message to Mods**." if add_app
+                                          else "")),
             subtitle=f"From {name}", footer="You'll only get this message once.", buttons=buttons)
         try:
             await member.send(view=view, allowed_mentions=discord.AllowedMentions.none())
@@ -822,41 +829,103 @@ class TeenSafety(commands.Cog):
     async def on_guild_remove(self, guild: discord.Guild):
         self._adults.pop(guild.id, None)  # the db rows go in forget_guild
 
-    # age mismatch, once per member. lookout can't change roles so it's only ever a note for the mods
+    # not really a teen. an adult who picks a teen role, or just never takes the 18+ one with teen by default,
+    # would skip every adult check. lookout can't change roles, so it checks their messages to teens like an adult's
 
+    # the oldest age their teen role allows, 17 if the name doesn't say. None without a teen role
+    @staticmethod
+    def _claimed_oldest(member: discord.Member, s: db.GuildSettings) -> int | None:
+        teen = s.role_ids("young_roles") | s.role_ids("older_roles")
+        roles = [r for r in member.roles if r.id in teen]
+        if not roles:
+            return None
+        ages = [int(n) for r in roles for n in re.findall(r"\d+", r.name) if 10 <= int(n) <= 17]
+        return max(ages) if ages else 17
+
+    # an account older than a teen could have, like 7 years on someone in 13-15
+    def _too_old(self, member: discord.Member, s: db.GuildSettings) -> str | None:
+        oldest = self._claimed_oldest(member, s) or 17
+        years = int((discord.utils.utcnow() - member.created_at).days / 365.25)
+        return f"account:{years}:{oldest}" if oldest - years < MIN_SIGNUP_AGE else None
+
+    async def _fake_teen(self, member: discord.Member, s: db.GuildSettings) -> bool:
+        if db.fake_teen(s.guild_id, member.id):
+            return True
+        key = (s.guild_id, member.id)
+        if key in self._aged:
+            return False
+        self._aged.add(key)
+        reason = self._too_old(member, s)
+        if not reason or not db.flag_fake_teen(s.guild_id, member.id, reason):  # not too old, or a mod cleared them
+            return False
+        if self._claimed_oldest(member, s):  # a teen role is worth a look. teen by default, it's just an unverified adult
+            self._background(self._fake_teen_case(member, s, [reason]))
+        return True
+
+    @staticmethod
+    def _fake_why(reason: str, message: discord.Message | None = None) -> str:
+        kind, _, rest = reason.partition(":")
+        if kind == "age":
+            where = f" in {message.channel.mention} · [Jump to Message]({message.jump_url})" if message else ""
+            return f"- Said they're {rest}{where}"
+        if kind == "account":
+            years, oldest = (int(x) for x in rest.split(":"))
+            return (f"- Their account is {years} years old. If they're {oldest} or younger, they made it at "
+                    f"{oldest - years} or younger.")
+        return "- Lookout caught them sending inappropriate messages to teens in other servers."
+
+    async def _fake_teen_case(self, member: discord.Member, s: db.GuildSettings, reasons: list[str],
+                              message: discord.Message | None = None) -> None:
+        guild = member.guild
+        if db.has_case(guild.id, member.id, "age"):
+            return
+        teen = s.role_ids("young_roles") | s.role_ids("older_roles")
+        role = next((r for r in member.roles if r.id in teen), None)
+        who = ui_kit.member_line(member).split("\n", 1)
+        who[0] += f" · has {role.mention}" if role else ""
+        buttons = action_buttons(guild.id, message.channel.id if message else None, member.id)
+        buttons.insert(0, self._btn("They're a Teen", "realteen", member.id))
+        await self._case(guild, s, member.id, "age", "Not Really a Teen?", [
+            ("member", "Who", "\n".join(who)),
+            ("warning", "Why Lookout Thinks So", "\n".join(self._fake_why(r, message) for r in reasons)),
+            ("staff", "What Changes Now", "Lookout checks their messages to teens like an adult's. Nothing looks "
+                                          "different to them."),
+        ], footer="If they really are a teen, press They're a Teen. Lookout can't change roles.", buttons=buttons,
+            thumbnail=member.display_avatar.url, evidence=message.jump_url if message else None,
+            summary="Has a teen role but probably isn't a teen")
+
+    # age mismatch, once per member
     async def _check_age(self, message: discord.Message, member: discord.Member, age: int, s) -> None:
-        # real roles only, with teen by default an unverified adult isn't a mismatch
+        guild = message.guild
         ids = {r.id for r in member.roles}
         band = (TEEN if ids & (s.role_ids("young_roles") | s.role_ids("older_roles"))
                 else ADULT if ids & s.role_ids("adult_roles") else None)
-        if band == ADULT and age <= 17:
-            roles = s.role_ids("adult_roles")
-            why = (f"If they're {age}, Lookout treats them as an adult, so messages adults send them aren't checked. "
-                   "Ask them, and switch their role if it's wrong.")
-        elif band == TEEN and age >= 18:
-            roles = s.role_ids("young_roles") | s.role_ids("older_roles")
-            why = (f"If they're {age}, they're chatting with teens as a teen, and Lookout doesn't check messages "
-                   "between teens. Look at this first.")
-        else:
+        if age >= 18 and band != ADULT and self.band(member, s) == TEEN:
+            if not db.flag_fake_teen(guild.id, member.id, f"age:{age}"):
+                return
+            if band == TEEN:  # with teen by default it's just an adult who didn't verify, no need to tell the mods
+                old = self._too_old(member, s)
+                await self._fake_teen_case(member, s, [f"age:{age}"] + ([old] if old else []), message)
             return
-        guild = message.guild
+        if not (band == ADULT and age <= 17):
+            return
         if not self._once(("age", guild.id, member.id), 86400) or db.has_case(guild.id, member.id, "age"):
             return
-        role = next((r for r in member.roles if r.id in roles), None)
+        role = next((r for r in member.roles if r.id in s.role_ids("adult_roles")), None)
         who = ui_kit.member_line(member).split("\n", 1)
         who[0] += f" · has {role.mention}" if role else ""
         buttons = action_buttons(guild.id, message.channel.id, member.id)
-        if band == ADULT:  # a teen with the wrong role doesn't need warn or timeout
-            buttons = buttons[:buttons.index(None)]
+        buttons = buttons[:buttons.index(None)]  # a teen with the wrong role doesn't need warn or timeout
         buttons.insert(2, self._btn("False Alarm", "agefalse", member.id))
         await self._case(guild, s, member.id, "age", "Age Mismatch", [
             ("member", "Who", "\n".join(who)),
             ("report", "What They Said", f"{_said(message.content)}\n-# In {message.channel.mention} · "
                                          f"[Jump to Message]({message.jump_url})"),
-            ("warning", "Why It Matters", why),
+            ("warning", "Why It Matters", f"If they're {age}, Lookout treats them as an adult, so messages adults send "
+                                          "them aren't checked. Ask them, and switch their role if it's wrong."),
         ], footer="Lookout can't change roles. False Alarm closes this.", buttons=buttons,
-            thumbnail=member.display_avatar.url, evidence=message.jump_url, report=band == TEEN,
-            summary=f"Says they're {age} but has {'an adult' if band == ADULT else 'a teen'} role")
+            thumbnail=member.display_avatar.url, evidence=message.jump_url, report=False,
+            summary=f"Says they're {age} but has an adult role")
 
     # alts
 
@@ -923,6 +992,8 @@ class TeenSafety(commands.Cog):
             return
         n, last = len(record["catches"]), int(record["catches"][0]["created_at"])
         teen_here = s.teen_safety and self.band(member, s, explicit=True) == TEEN
+        if s.teen_safety and self.band(member, s) == TEEN:  # counted as a teen here, so check them like an adult
+            db.flag_fake_teen(guild.id, member.id, "network")
         buttons = action_buttons(guild.id, message.channel.id, member.id)
         ui_kit.add_action(buttons, "Keep Away From Teens", "Their replies and mentions to teens get removed",
                           f"{PREFIX}:netkeep:{member.id}")
@@ -931,7 +1002,8 @@ class TeenSafety(commands.Cog):
             ("warning", "What Happened Before",
              f"In **{record['servers']} other servers** that use Lookout, its filter removed **{n} inappropriate "
              f"message{'' if n == 1 else 's'}** this account sent to **{record['teens']} different teens**. The last "
-             f"one was <t:{last}:R>." + ("\n**They have a teen role here.**" if teen_here else "")
+             f"one was <t:{last}:R>." + ("\n**They have a teen role here,** so Lookout now checks their messages to "
+                                         "teens like an adult's." if teen_here else "")
              + "\n-# Lookout doesn't say which servers, who the teens were, or what the messages said."),
             ("cases", "Why Now", f"They just sent a message in {message.channel.mention}. "
                                  f"[Jump to It]({message.jump_url})"),
@@ -1041,6 +1113,13 @@ class TeenSafety(commands.Cog):
             if interaction.message:
                 db.resolve_case(interaction.message.id, user.id, "False alarm")
             return await self._stamp(interaction, f"Marked as a false alarm by {user.mention}.", state="False Alarm")
+        if action == "realteen":  # "not really a teen?" was wrong. stays cleared, lookout won't flag them again here
+            db.clear_fake_teen(guild.id, ids[0])
+            db.log(guild.id, ids[0], "teen_cleared", "A mod said they really are a teen", actor_id=user.id)
+            if interaction.message:
+                db.resolve_case(interaction.message.id, user.id, "They really are a teen")
+            return await self._stamp(interaction, f"Marked as a teen by {user.mention}. Lookout treats them as a teen "
+                                                  "again.", state="Cleared")
         if action == "tns":
             return await self._discord_report(interaction)
 

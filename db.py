@@ -105,6 +105,12 @@ _conn.executescript(
     CREATE TABLE IF NOT EXISTS join_log (
         guild_id INTEGER PRIMARY KEY, message_id INTEGER, joined_at REAL, stage INTEGER DEFAULT 0, servers INTEGER
     );
+    -- counted as a teen but probably isn't one (said an adult age, account too old, on the network).
+    -- their messages to teens get checked like an adult's. cleared = a mod said they really are a teen
+    CREATE TABLE IF NOT EXISTS fake_teens (
+        guild_id INTEGER, user_id INTEGER, reason TEXT, created_at REAL, cleared INTEGER DEFAULT 0,
+        PRIMARY KEY (guild_id, user_id)
+    );
 
     -- removed features (age-aware voice, /trust, first-contact heads-up, selfie reply block, warning appeals)
     DROP TABLE IF EXISTS first_contacts;
@@ -323,6 +329,7 @@ def purge_old() -> int:
     _conn.execute("DELETE FROM nick_tips WHERE created_at < ?", (cutoff,))
     _conn.execute("DELETE FROM leavers WHERE left_at < ?", (cutoff,))
     _conn.execute("DELETE FROM alt_alerts WHERE created_at < ?", (cutoff,))
+    _conn.execute("DELETE FROM fake_teens WHERE created_at < ?", (cutoff,))
     for table in ("network_catches", "network_alerts"):
         _conn.execute(f"DELETE FROM {table} WHERE created_at < ?", (time.time() - NETWORK_DAYS * 86400,))
     _conn.commit()
@@ -651,7 +658,7 @@ def delete_event(guild_id: int, event_id: int) -> tuple | None:
 # teen safety
 
 TEEN_TABLES = ("teen_signals", "restrictions", "risk_flags", "nudged", "nick_tips", "leavers", "alt_alerts",
-               "verified_adults")
+               "verified_adults", "fake_teens")
 
 
 def get_meta(key: str) -> str | None:
@@ -725,6 +732,28 @@ def set_restricted(guild_id: int, user_id: int, on: bool) -> None:
         _conn.execute("INSERT OR IGNORE INTO restrictions VALUES (?, ?, 'active', ?)", (guild_id, user_id, time.time()))
     else:
         _conn.execute("DELETE FROM restrictions WHERE guild_id=? AND user_id=?", (guild_id, user_id))
+    _conn.commit()
+
+
+# "not really a teen". reason is short, like "age:24", "account:7:15" or "network", never message text
+def fake_teen(guild_id: int, user_id: int) -> str | None:
+    row = _conn.execute("SELECT reason FROM fake_teens WHERE guild_id=? AND user_id=? AND cleared=0",
+                        (guild_id, user_id)).fetchone()
+    return row[0] if row else None
+
+
+# False if they're already flagged, or a mod already said they really are a teen
+def flag_fake_teen(guild_id: int, user_id: int, reason: str) -> bool:
+    cur = _conn.execute("INSERT OR IGNORE INTO fake_teens (guild_id, user_id, reason, created_at) VALUES (?, ?, ?, ?)",
+                        (guild_id, user_id, reason, time.time()))
+    _conn.commit()
+    return cur.rowcount == 1
+
+
+def clear_fake_teen(guild_id: int, user_id: int) -> None:
+    _conn.execute("INSERT INTO fake_teens (guild_id, user_id, reason, created_at, cleared) VALUES (?, ?, 'cleared', ?, 1)"
+                  " ON CONFLICT(guild_id, user_id) DO UPDATE SET cleared=1, created_at=excluded.created_at",
+                  (guild_id, user_id, time.time()))  # kept 90 days from when the mod said so
     _conn.commit()
 
 

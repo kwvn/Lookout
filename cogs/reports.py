@@ -233,15 +233,19 @@ class Reports(commands.Cog):
         self.pending[(user_id, reported["message_id"])] = (reported, now)
 
     async def _report_dm(self, interaction: discord.Interaction, message: discord.Message):
+        await self._dm_report(interaction, self._copy(message) | {"dm": True, "to_id": interaction.user.id})
+
+    # also used by Tell the Mods on Is this safe?
+    async def _dm_report(self, interaction: discord.Interaction, reported: dict):
         await interaction.response.defer(ephemeral=True, thinking=True)
-        guilds = await self._shared_servers(interaction.user.id, message.author.id)
+        guilds = await self._shared_servers(interaction.user.id, reported["author_id"])
         if not guilds:
-            name = discord.utils.escape_markdown(message.author.name)
+            user = self.bot.get_user(reported["author_id"])
+            who = f"**@{discord.utils.escape_markdown(user.name)}**" if user else "this person"
             return await interaction.followup.send(view=ui_kit.note(
-                f"You and **@{name}** don't share a server that uses Lookout, so there's no one to send it to.\n"
+                f"You and {who} don't share a server that uses Lookout, so there's no one to send it to.\n"
                 "-# To report it to Discord, right-click the message and pick **Report Message**."),
                 ephemeral=True)
-        reported = self._copy(message) | {"dm": True, "to_id": interaction.user.id}
         self._hold(interaction.user.id, reported)
         view = self._message_picker(reported, guilds[0]) if len(guilds) == 1 else self._server_picker(reported, guilds)
         await interaction.followup.send(view=view, files=ui_kit.files(view), ephemeral=True,
@@ -495,8 +499,23 @@ class Reports(commands.Cog):
             return
         parts = cid.split(":")
         action = parts[1]
-        if interaction.guild is None and action not in ("dmserver", "mpick", "msend"):  # DM report steps only
+        if interaction.guild is None and action not in ("dmserver", "mpick", "msend", "safetell"):  # DM report steps
             return
+
+        if action == "safetell":  # Tell the Mods, from Is this safe?
+            message_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+            saved = self.pending.get((interaction.user.id, message_id))
+            if saved is None:
+                return await interaction.response.send_message(view=ui_kit.note(
+                    "That took too long. Right-click the message and pick **Apps** > **Report Message to Mods**."),
+                    ephemeral=True)
+            if saved[0].get("dm"):
+                return await self._dm_report(interaction, saved[0])
+            problem = self._cant_report(interaction.guild)
+            if problem:
+                return await interaction.response.send_message(view=ui_kit.note(problem), ephemeral=True)
+            return await interaction.response.send_message(view=self._message_picker(saved[0]), ephemeral=True,
+                                                           allowed_mentions=discord.AllowedMentions.none())
 
         if action == "dmserver":  # DM report: server picked
             message_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0

@@ -55,7 +55,7 @@ LABELS = {
     "teen_role_switch": "Switched to a teen role", "teen_restricted": "Kept away from teens",
     "teen_unrestricted": "No longer kept away from teens", "teen_photo_reply": "Reply to a teen's photo removed",
     "teen_left": "Left during a case", "teen_flirty": "Inappropriate message to a teen removed",
-    "staff_proofsubmit": "Proof added to a case",
+    "staff_proofsubmit": "Proof added to a case", "teen_cleared": "Marked as a real teen by a mod",
 }
 
 

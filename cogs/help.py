@@ -39,8 +39,8 @@ def tips_message(banner: bool = True) -> discord.ui.LayoutView:
     }
     for title, text in TIPS:
         if title == "If Something Feels Off" and add_app:
-            text += ("\n-# Got a DM that's not okay? Add Lookout to your apps, then right-click it > **Apps** > "
-                     "**Report Message to Mods**.")
+            text += ("\n-# Not sure about a DM? Add Lookout to your apps, then right-click it > **Apps** > "
+                     "**Is this safe?** or **Report Message to Mods**.")
         box = discord.ui.Container(discord.ui.TextDisplay(f"## {title}\n{text}"))
         if title in buttons:
             box.add_item(discord.ui.ActionRow(*buttons[title]))
