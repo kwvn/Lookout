@@ -289,16 +289,6 @@ def log(guild_id, user_id, kind, detail="", channel_id=None, actor_id=None, mess
     return cur.lastrowid
 
 
-def get_event(guild_id: int, event_id: int) -> dict | None:
-    row = _conn.execute("SELECT kind, user_id, actor_id, detail, created_at FROM events WHERE guild_id=? AND id=?",
-                        (guild_id, event_id)).fetchone()
-    if not row:
-        return None
-    event = dict(zip(("kind", "user_id", "actor_id", "detail", "created_at"), row))
-    event["detail"] = unseal(event["detail"])
-    return event
-
-
 def count_flags(guild_id: int, user_id: int) -> int:
     q = f"SELECT COUNT(*) FROM events WHERE guild_id=? AND user_id=? AND kind IN ({','.join('?' * len(FLAG_KINDS))})"
     return _conn.execute(q, (guild_id, user_id, *FLAG_KINDS)).fetchone()[0]

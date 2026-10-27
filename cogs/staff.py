@@ -200,7 +200,7 @@ class Staff(commands.Cog):
             if db.has_reporters(alert_id) and db.get_settings(guild.id).report_updates:
                 modal.add_item(discord.ui.TextInput(label="Tell the reporter (optional)", custom_id="reporter",
                                                     style=discord.TextStyle.paragraph, required=False, max_length=300,
-                                                    placeholder="Like: We took care of it. Thanks for letting us know!"))
+                                                    placeholder="Like: We took care of it. Thanks for letting us know."))
             return await interaction.response.send_modal(modal)
         if action == "resolvesubmit":
             if claim is None:

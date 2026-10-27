@@ -328,7 +328,7 @@ async def find_age_roles(guild: discord.Guild) -> tuple[list[int], list[int], st
                 by_name = guess_age_roles(guild)[1]
                 found = (list(dict.fromkeys(teen))[:10], (list(dict.fromkeys(adult)) or by_name)[:10], title or None)
                 break
-    except Exception:  # weird onboarding data, use role names
+    except Exception:  # onboarding data we can't read, use role names
         found = None
     _FOUND[guild.id] = found or (*guess_age_roles(guild), None)
     return _FOUND[guild.id]

@@ -23,7 +23,7 @@ USER_INSTALL = False
 # ids from here up are the "staff did X" lines on alerts
 STAFF_NOTE_ID = 900
 
-# stuff tidy() never touches
+# tidy() leaves these alone: code, mentions, emojis, links and @names
 _PROTECT = re.compile(r"(```[\s\S]*?```|</[\w -]+:\d+>|<[^>\s]+>|https?://\S+|`[^`]*`|@[\w.]+)")
 _ACRONYMS = re.compile(r"\b(nsfw|vc|dm|id)\b", re.IGNORECASE)
 _LEADING_EMOJI = re.compile(r"^[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200D\s]+")
