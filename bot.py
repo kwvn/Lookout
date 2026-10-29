@@ -22,7 +22,7 @@ log = logging.getLogger("lookout")
 
 EXTENSIONS = ["cogs.setup", "cogs.help", "cogs.demo", "cogs.staff", "cogs.cases", "cogs.cleanup",
               "cogs.reports", "cogs.reminder", "cogs.summary", "cogs.imagescan", "cogs.teensafety",
-              "cogs.totals", "cogs.trivia", "cogs.network", "cogs.joinlog", "cogs.safecheck"]
+              "cogs.totals", "cogs.trivia", "cogs.network", "cogs.joinlog", "cogs.safecheck", "cogs.faq"]
 # rotates every few minutes
 STATUSES = ["Always on watch", "On watch · /help", "Keeping teens safe", "Guarding {servers}"]
 STATUS_MINUTES = 5
