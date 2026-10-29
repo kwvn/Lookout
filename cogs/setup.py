@@ -46,7 +46,7 @@ TOGGLES = {name: (title, text) for name, title, text in PROTECTIONS} | {
 PAGE_OF = {"filter_languages": "langs", "staff_channel": "staff", "staff_role": "staff", "reminder": "staff",
            "young_roles": "ages", "adult_roles": "ages", "no_age_role": "ages", "age_check": "ages", "age_mode": "ages",
            "adult_button": "ages",
-           "post_panel": "reports", "post_tips": "reports", "report_updates": "reports",
+           "post_panel": "reports", "report_updates": "reports",
            "image_scan": "extras", "weekly_summary": "extras", "trivia_channel": "extras", "network": "extras"}
 # channel names that look like dating or rating each other's looks, for the Safety Checkup
 DATING = re.compile(r"dating|e-?date|couples?|selfies?|rate-?me|smash-?or-?pass|hot-?or-?not|lf-?(?:bf|gf)|"
@@ -178,9 +178,8 @@ def home(guild: discord.Guild, s: db.GuildSettings, note: str | None = None):
         teen = _block("Teen Safety", [("Status", "Off")], _button("Set Up", "page", "teen"),
                       "Pick your age roles to turn on the filters.")
 
-    panel, tips = _channel(guild, s.panel_channel_id), _channel(guild, s.tips_channel_id)
+    panel = _channel(guild, s.panel_channel_id)
     reports = _block("Reports", [("Report Button", f"Posted in {panel}" if panel else "Not posted yet"),
-                                 ("Safety Tips", f"Posted in {tips}" if tips else "Not posted yet"),
                                  ("Reporter Updates", "On" if s.report_updates else "Off")],
                      _button("Edit" if panel else "Post It", "page", "reports"))
 
@@ -391,16 +390,12 @@ def ages_page(guild, s: db.GuildSettings):
 
 
 def reports_page(guild, s: db.GuildSettings):
-    panel, tips_channel = _channel(guild, s.panel_channel_id), _channel(guild, s.tips_channel_id)
+    panel = _channel(guild, s.panel_channel_id)
     post = discord.ui.ChannelSelect(custom_id=f"{PREFIX}:set:post_panel", channel_types=[discord.ChannelType.text],
-                                    placeholder="Post it in a channel...")
-    tips = discord.ui.ChannelSelect(custom_id=f"{PREFIX}:set:post_tips", channel_types=[discord.ChannelType.text],
                                     placeholder="Post it in a channel...")
     return _card(guild, "Reports", "How members report and what they hear back",
                  [[f"**Report Button** · {f'Posted in {panel}' if panel else 'Not posted yet'}\n"
                    "-# Members press it to report a problem without typing a command", post],
-                  [f"**Safety Tips** · {f'Posted in {tips_channel}' if tips_channel else 'Not posted yet'}\n"
-                   "-# Safety tips for teens, with a Report a Problem button", tips],
                   _toggle(s, "report_updates")],
                  nav=[_button("Back", "page", "home")])
 
@@ -827,11 +822,6 @@ class Setup(commands.Cog):
             if not await self._post_panel(channel, can_post):
                 return await tell("Lookout can't post in that channel. Pick a different one.")
             s.panel_channel_id = channel.id
-        elif arg == "post_tips":
-            channel = guild.get_channel(int(values[0])) if values else None
-            if not can_post(channel) or not await self._post_tips(channel):
-                return await tell("Lookout can't post in that channel. Pick a different one.")
-            s.tips_channel_id = channel.id
         elif arg == "trivia_channel":
             channel = guild.get_channel(int(values[0])) if values else None
             if not can_post(channel):
@@ -864,16 +854,6 @@ class Setup(commands.Cog):
             s.young_roles, s.older_roles = ",".join(values) or None, None
         if s.teen_safety and not was_on and s.risk_mode == "test":
             s.risk_test_until = time.time() + TEST_DAYS * 86400  # test week starts now
-
-    @staticmethod
-    async def _post_tips(channel) -> bool:
-        from cogs.help import tips_message
-        try:
-            view = tips_message(banner=channel.permissions_for(channel.guild.me).attach_files)
-            await channel.send(view=view, files=ui_kit.files(view))
-            return True
-        except discord.HTTPException:
-            return False
 
     @staticmethod
     async def _post_adult_button(channel) -> bool:
