@@ -1,5 +1,4 @@
 import io
-import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -338,7 +337,7 @@ def banner(icon: str, title: str, line: str | None = None) -> bytes | None:
 
 # /totals
 
-REVIEW_USERS = 10_000  # message content intent gets reviewed at this many users
+AREA = tuple(round(p + (w - p) * .1) for p, w in zip(PANEL, WHITE))  # under the members line
 
 
 def _minutes(m: float | None) -> str:
@@ -348,32 +347,83 @@ def _minutes(m: float | None) -> str:
     return f"{m} min" if m < 60 else f"{m // 60}h {m % 60}m"
 
 
-def totals(servers: int, users: int, t: dict[str, int], claim_min: float | None) -> bytes:
-    c = _Canvas(640)
-    since = time.localtime(t.get("since") or time.time())
+def _drawable(text: str, font: str) -> str:  # server names can have emojis the font doesn't have
+    return "".join(ch for ch in text if ch.isspace() or _has_glyph(ch, font)).strip()
+
+
+def _stat_tile(c: _Canvas, x, y, w, h, number, label, change, size=50):
+    c.box(x, y, w, h, PANEL, r=18)
+    c.text(x + 28, y + 18, number, BOLD, size, WHITE, fit=w - 56)
+    c.text(x + 28, y + 30 + size, label, REGULAR, 22, GREY, fit=w - 56)
+    if change:
+        c.text(x + 28, y + 60 + size, change, REGULAR, 20, WHITE, fit=w - 56)
+
+
+def _members_chart(c: _Canvas, x, y, w, h, points: list[int], first: str, last: str, empty: str):
+    c.box(x, y, w, h, PANEL, r=18)
+    c.text(x + 28, y + 24, "Members, last 30 days", REGULAR, 22, GREY)
+    x0, x1, y0, y1 = x + 28, x + w - 28, y + 76, y + h - 62
+    if len(points) < 2:
+        c.text((x0 + x1) / 2, (y0 + y1) / 2, empty, REGULAR, 22, GREY, anchor="mm", fit=x1 - x0)
+        return
+    lo, hi = min(points), max(points)
+    pad = max((hi - lo) * .15, 1)
+    lo, hi = lo - pad, hi + pad
+    xy = [((x0 + (x1 - x0) * i / (len(points) - 1)) * S, (y1 - (p - lo) / (hi - lo) * (y1 - y0)) * S)
+          for i, p in enumerate(points)]
+    c.d.polygon([(x0 * S, y1 * S), *xy, (x1 * S, y1 * S)], fill=AREA)
+    c.d.line(xy, fill=WHITE, width=4 * S, joint="curve")
+    ex, ey = xy[-1]
+    c.d.ellipse((ex - 7 * S, ey - 7 * S, ex + 7 * S, ey + 7 * S), fill=WHITE)
+    c.text(x0, y + h - 44, first, REGULAR, 18, DIM)
+    c.text(x1, y + h - 44, last, REGULAR, 18, DIM, anchor="ra")
+
+
+# d comes ready to draw from cogs/totals.py: numbers already formatted, changes already worded
+def totals(d: dict) -> bytes:
+    big = d["big"] or [("Every server has finished setup.", "")]
+    height = 1660 + 26 + len(big) * 60 + 6 + 30 + 24 + PAD
+    c = _Canvas(height)
     c.text(PAD + 2, PAD + 6, "LOOKOUT", REGULAR, 24, GREY)
     c.text(PAD, PAD + 40, "Totals", BOLD, 64, WHITE)
-    c.text(W - PAD, PAD + 70, f"Since {time.strftime('%B', since)} {since.tm_mday}, {since.tm_year}", REGULAR, 24,
-           GREY, anchor="ra")
-    alerts, wrong = t.get("filter_alerts", 0), t.get("false_alarms", 0)
-    tiles = [(f"{servers:,}", "server" if servers == 1 else "servers"),
-             (f"{t.get('removed', 0):,}", "messages to teens removed"),
-             (f"{t.get('contact', 0):,}", "contact info removed"),
-             (f"{t.get('handled', 0):,}", "cases handled"),
-             (f"{wrong / alerts:.1%}" if alerts else "None yet",
-              f"False Alarms ({wrong:,} of {alerts:,} alerts)" if alerts else "False Alarms"),
-             (_minutes(claim_min), "average time to claim a case")]
-    tw, th = (INNER - 2 * GAP) / 3, 132
-    for i, (number, label) in enumerate(tiles):
-        x, y = PAD + (i % 3) * (tw + GAP), 170 + (i // 3) * (th + GAP)
-        c.box(x, y, tw, th, PANEL, r=18)
-        c.text(x + 28, y + 24, number, BOLD, 52, WHITE, fit=tw - 56)
-        c.text(x + 28, y + 90, label, REGULAR, 22, GREY, fit=tw - 56)
-    y = 170 + 2 * (th + GAP) + 14
-    c.text(PAD + 2, y, "Users · Discord reviews Message Content at 10,000", REGULAR, 22, GREY)
-    c.text(W - PAD, y, f"{users:,} of {REVIEW_USERS:,}" if users < REVIEW_USERS else f"{users:,}, past {REVIEW_USERS:,}",
-           BOLD, 22, WHITE, anchor="ra")
-    c.box(PAD, y + 40, INNER, 14, TRACK, r=7)
-    c.box(PAD, y + 40, max(INNER * min(users / REVIEW_USERS, 1), 14), 14, ACCENT, r=7)
-    c.text(PAD + 2, y + 74, "Counts only. No names, IDs or messages are kept for these.", REGULAR, 20, DIM)
+    c.text(W - PAD, PAD + 70, d["range"], REGULAR, 24, GREY, anchor="ra", fit=INNER - 260)
+
+    y, lw = 170, 404  # growth: three tiles on the left, the members chart on the right
+    for i, tile in enumerate(d["growth"]):
+        _stat_tile(c, PAD, y + i * 156, lw, 136, *tile, size=44)
+    _members_chart(c, PAD + lw + GAP, y, INNER - lw - GAP, 3 * 136 + 2 * GAP, d["chart"], d["chart_from"], d["chart_to"],
+                   d["chart_empty"])
+
+    y = 658
+    c.text(PAD, y, d["safety_title"], BOLD, 30, WHITE)
+    tw = (INNER - 2 * GAP) / 3
+    for i, tile in enumerate(d["safety"]):
+        _stat_tile(c, PAD + (i % 3) * (tw + GAP), y + 50 + (i // 3) * 160, tw, 140, *tile)
+    tw = (INNER - GAP) / 2
+    for i, tile in enumerate(d["quality"]):
+        _stat_tile(c, PAD + i * (tw + GAP), y + 370, tw, 140, *tile)
+
+    y = 1208
+    c.text(PAD, y, "Setup", BOLD, 30, WHITE)
+    c.box(PAD, y + 50, INNER, 312, PANEL, r=18)
+    for i, (label, n, total) in enumerate(d["setup"]):
+        ry = y + 78 + i * 68
+        c.text(PAD + 28, ry, label, REGULAR, 22, GREY)
+        c.text(W - PAD - 28, ry, f"{n / total:.0%} · {n:,} of {total:,}" if total else "None yet", BOLD, 22, WHITE,
+               anchor="ra")
+        c.box(PAD + 28, ry + 38, INNER - 56, 14, TRACK, r=7)
+        if total and n:
+            c.box(PAD + 28, ry + 38, max((INNER - 56) * n / total, 14), 14, ACCENT, r=7)
+
+    y = 1610
+    c.text(PAD, y, "Biggest servers that haven't finished setup", BOLD, 30, WHITE)
+    c.box(PAD, y + 50, INNER, 26 + len(big) * 60 + 6, PANEL, r=18)
+    for i, (name, meta) in enumerate(big):
+        ry = y + 76 + i * 60
+        if i:
+            c.box(PAD + 28, ry - 16, INNER - 56, 2, TRACK)
+        c.text(PAD + 28, ry, _drawable(name, BOLD) or "Unnamed server", BOLD, 24, WHITE, fit=INNER / 2 - 40)
+        c.text(W - PAD - 28, ry, meta, REGULAR, 22, GREY, anchor="ra", fit=INNER / 2 - 40)
+    c.text(PAD + 2, height - PAD - 24, "Only daily counts are saved for this. Server names come live from Discord.",
+           REGULAR, 20, DIM)
     return c.png()

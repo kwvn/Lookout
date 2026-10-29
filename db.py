@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -104,6 +105,10 @@ _conn.executescript(
     -- /join-log: the post about each server lookout joined, edited as its setup goes along
     CREATE TABLE IF NOT EXISTS join_log (
         guild_id INTEGER PRIMARY KEY, message_id INTEGER, joined_at REAL, stage INTEGER DEFAULT 0, servers INTEGER
+    );
+    -- /totals: the running totals once a day, so it can show changes. numbers only, day is "2026-10-29" (utc)
+    CREATE TABLE IF NOT EXISTS daily_totals (
+        day TEXT PRIMARY KEY, servers INTEGER, members INTEGER, counters TEXT
     );
     -- counted as a teen but probably isn't one (said an adult age, account too old, on the network).
     -- their messages to teens get checked like an adult's. cleared = a mod said they really are a teen
@@ -940,10 +945,36 @@ def totals() -> dict[str, int]:
     return dict(_conn.execute("SELECT key, value FROM totals").fetchall())
 
 
-def claim_minutes() -> float | None:
+def claim_minutes(start: float = 0, end: float | None = None) -> float | None:
     row = _conn.execute("SELECT AVG(claimed_at - created_at) FROM alerts WHERE claimed_at IS NOT NULL"
-                        " AND claimed_at >= created_at").fetchone()
+                        " AND claimed_at >= created_at AND created_at >= ? AND created_at < ?",
+                        (start, end or time.time() + 1)).fetchone()
     return row[0] / 60 if row and row[0] is not None else None
+
+
+# the numbers at the start of each day: the first save of a day sticks. kept about a year
+def save_day(day: str, servers: int, members: int) -> None:
+    _conn.execute("INSERT OR IGNORE INTO daily_totals VALUES (?, ?, ?, ?)",
+                  (day, servers, members, json.dumps(totals())))
+    _conn.execute("DELETE FROM daily_totals WHERE day < date(?, '-400 days')", (day,))
+    _conn.commit()
+
+
+def _day_row(row) -> dict:
+    return {**json.loads(row[3]), "day": row[0], "servers": row[1], "members": row[2]}
+
+
+# the last saved day on or before this one, None if there isn't one
+def day_before(day: str) -> dict | None:
+    row = _conn.execute("SELECT day, servers, members, counters FROM daily_totals WHERE day<=? ORDER BY day DESC LIMIT 1",
+                        (day,)).fetchone()
+    return _day_row(row) if row else None
+
+
+def days_since(day: str) -> list[dict]:
+    rows = _conn.execute("SELECT day, servers, members, counters FROM daily_totals WHERE day>=? ORDER BY day",
+                         (day,)).fetchall()
+    return [_day_row(r) for r in rows]
 
 
 # trivia

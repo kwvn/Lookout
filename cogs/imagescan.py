@@ -24,6 +24,14 @@ MAX_GIF_FRAMES = 6
 MAX_LINKS = 4  # linked images checked per message
 GIF_PICKER = ("tenor.com", "giphy.com")  # discord's gif picker, already filtered on their side
 TAKE_IT_DOWN = "https://takeitdown.ncmec.org"
+# discord's own content scanning marks attachments and embeds with these (same bits on both). discord.py only
+# knows the first one, so they're read as plain bits. worst first
+EXPLICIT, GORE, SELF_HARM = 1 << 4, 1 << 6, 1 << 7
+MARKS = ((SELF_HARM, "self_harm"), (GORE, "gore"), (EXPLICIT, "explicit"))
+# kind: (what it is, alert title when removed, when it couldn't be removed)
+KINDS = {"explicit": ("Inappropriate image", "Image Removed", "Inappropriate Image Found"),
+         "gore": ("Graphic image", "Graphic Image Removed", "Graphic Image Found"),
+         "self_harm": ("Self-harm image", "Self-Harm Image Removed", "Self-Harm Image Found")}
 
 
 class ImageScan(commands.Cog):
@@ -31,6 +39,7 @@ class ImageScan(commands.Cog):
         self.bot = bot
         self._detector = None
         self._lock = threading.Lock()
+        self._done: dict[int, None] = {}  # messages already handled, discord's mark can come in a moment later
 
     # how sure it is that something explicit is in the picture, 0 to 1
     def _score(self, data: bytes) -> float:
@@ -72,6 +81,10 @@ class ImageScan(commands.Cog):
         roles = roles or ([guild.default_role] if s.teen_default else [])
         return not roles or any(channel.permissions_for(r).view_channel for r in roles)
 
+    @staticmethod
+    def _nsfw(channel) -> bool:
+        return getattr(channel, "is_nsfw", lambda: False)()
+
     # a pasted image link shows up as a preview. goes through discord's media proxy, not the site itself
     @staticmethod
     def _linked(message: discord.Message) -> list[str]:
@@ -85,10 +98,24 @@ class ImageScan(commands.Cog):
                     urls.append(url)
         return urls[:MAX_LINKS]
 
+    # the worst thing discord's own scanning marked in the message, forwards and videos too. None if nothing
+    @staticmethod
+    def discord_mark(message: discord.Message) -> str | None:
+        snaps = getattr(message, "message_snapshots", None) or []
+        items = [*message.attachments, *message.embeds,
+                 *(item for snap in snaps for item in (*snap.attachments, *snap.embeds))]
+        bits = 0
+        for item in items:
+            bits |= getattr(getattr(item, "flags", None), "value", 0) or 0
+        return next((kind for bit, kind in MARKS if bits & bit), None)
+
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or message.guild is None:
             return
+        mark = self.discord_mark(message)
+        if mark:  # discord already looked, no need to run our own scan
+            return await self._marked(message, mark)
 
         def pictures(attachments):
             return [a for a in attachments
@@ -107,22 +134,38 @@ class ImageScan(commands.Cog):
     @commands.Cog.listener()
     async def on_message_edit(self, before: discord.Message, after: discord.Message):
         # discord adds the link preview a moment later, as an edit
-        if after.author.bot or after.guild is None:
+        if after.author.bot or after.guild is None or after.id in self._done:
             return
         seen = set(self._linked(before))
         new = [url for url in self._linked(after) if url not in seen]
         if new:
             await self._scan(after, [(url, partial(self._fetch, url)) for url in new])
 
+    # discord's scan can finish after the message is sent, the mark comes in as an edit. raw, so old messages count too
+    @commands.Cog.listener()
+    async def on_raw_message_edit(self, payload: discord.RawMessageUpdateEvent):
+        message = getattr(payload, "message", None)
+        if payload.guild_id is None or message is None or message.guild is None or message.author.bot:
+            return
+        mark = self.discord_mark(message)
+        if mark:
+            await self._marked(message, mark)
+
+    async def _marked(self, message: discord.Message, kind: str) -> None:
+        s = db.get_settings(message.guild.id)
+        if not (s.configured and s.image_scan) or message.id in self._done:
+            return
+        # self-harm gets a check-in wherever it's posted. the rest only where teens can see, like our own scan
+        if kind != "self_harm" and (self._nsfw(message.channel) or not self._teens_can_see(message.channel, s)):
+            return
+        await self._act(message, s, kind, "flagged by Discord")
+
     async def _scan(self, message: discord.Message, sources: list, forwarded: bool = False) -> None:
         s = db.get_settings(message.guild.id)
-        if not (s.configured and s.image_scan) or getattr(message.channel, "is_nsfw", lambda: False)():
+        if not (s.configured and s.image_scan) or self._nsfw(message.channel):
             return  # nsfw channels are fine
         if not self._teens_can_see(message.channel, s):
             return  # less work for the host, and fewer false alarms where teens can't go anyway
-        author = message.author
-        teens = self.bot.get_cog("TeenSafety")
-        teen = bool(s.teen_safety and teens and isinstance(author, discord.Member) and teens.is_teen(author, s))
 
         worst = 0.0
         for name, read in sources:
@@ -134,18 +177,36 @@ class ImageScan(commands.Cog):
             worst = max(worst, score)
             if worst >= config.NSFW_THRESHOLD:
                 break
-        if worst < config.NSFW_THRESHOLD:
+        if worst >= config.NSFW_THRESHOLD:
+            await self._act(message, s, "explicit", f"{worst:.0%} sure", forwarded)
+
+    # remove it and open a case. how: "92% sure" or "flagged by Discord"
+    async def _act(self, message: discord.Message, s: db.GuildSettings, kind: str, how: str,
+                   forwarded: bool = False) -> None:
+        if message.id in self._done:
             return
+        self._done[message.id] = None
+        if len(self._done) > 5000:
+            self._done = dict.fromkeys(list(self._done)[-2500:])
+        author = message.author
+        teens = self.bot.get_cog("TeenSafety")
+        teen = bool(s.teen_safety and teens and isinstance(author, discord.Member) and teens.is_teen(author, s))
+        label, removed_title, found_title = KINDS[kind]
 
         try:
             await message.delete()
             deleted = True
         except discord.HTTPException:
             deleted = False
+        if deleted:
+            db.bump("images")
 
-        db.log(message.guild.id, author.id, "image_flagged", f"Inappropriate image ({worst:.0%} sure)", message.channel.id)
+        db.log(message.guild.id, author.id, "image_flagged", f"{label} ({how})", message.channel.id)
         dm_ok = True
-        if deleted and teen:  # no callout in chat for a teen, a private message instead
+        if kind == "self_harm":  # anyone, never a note in the chat
+            dm_ok = await self._check_in_dm(message, deleted)
+            db.bump("self_harm")
+        elif deleted and teen and kind == "explicit":  # no callout in chat for a teen, a private message instead
             dm_ok = await self._support_dm(message)
         elif deleted:
             try:
@@ -156,37 +217,50 @@ class ImageScan(commands.Cog):
                 pass
 
         flags = db.count_flags(message.guild.id, author.id)
-        what = (f"Inappropriate image ({worst:.0%} sure), removed" if deleted
-                else f"Inappropriate image ({worst:.0%} sure). **Not removed.** Lookout needs Manage Messages · "
-                     f"[Jump to It]({message.jump_url})")
+        what = (f"{label} ({how}), removed" if deleted
+                else f"{label} ({how}). **Not removed.** Lookout needs Manage Messages · [Jump to It]({message.jump_url})")
         if forwarded:
             what += "\n-# It was forwarded."
-        if teen:
+        if kind == "self_harm":
+            what += ("\n**Posted by a teen.**" if teen else "") + (
+                "\n**Check in with them privately.** Don't bring it up in the chat. Lookout sent them a private message "
+                "with a helpline." if dm_ok else
+                "\n**Check in with them privately.** Don't bring it up in the chat. Lookout couldn't DM them, their DMs "
+                "are closed.")
+        elif teen and kind == "explicit":
             what += ("\n**Posted by a teen.** It may be a picture of themselves. Don't save or share it, not even to "
                      "report it. Talk to them privately and report it to Discord.")
             if not dm_ok:
                 what += "\n-# Couldn't DM them, their DMs are closed. Check in with them another way."
+        elif teen:
+            what += "\n**Posted by a teen.**"
         if message.content:
             what += f"\n-# Sent with it: {ui_kit.hidden(message.content, 200)}"
+        if kind == "self_harm":
+            footer = ("If they could be in danger right now, contact local emergency services. You can also report it to "
+                      "Discord at https://dis.gd/request so their safety team can reach out.")
+        elif teen and kind == "explicit":
+            footer = ("If someone pressured them into it, it can be sextortion. Report it to Discord at "
+                      "https://dis.gd/request. Take It Down can help stop it spreading.")
+        else:
+            footer = ("The image isn't shown here on purpose. If it could be illegal, report it to Discord at "
+                      "https://dis.gd/request")
+        urgent = teen or kind == "self_harm"
         voice = author.voice.channel.id if isinstance(author, discord.Member) and author.voice else None
         case_no = db.next_case_no(message.guild.id)
-        ping = f" · <@&{s.staff_role_id}>" if teen and s.staff_role_id else ""
+        ping = f" · <@&{s.staff_role_id}>" if urgent and s.staff_role_id else ""
         view = ui_kit.alert(
-            ui_kit.titled("image", ("Image Removed" if deleted else "Inappropriate Image Found") + f" · #{case_no}"),
+            ui_kit.titled("image", (removed_title if deleted else found_title) + f" · #{case_no}"),
             f"<t:{int(discord.utils.utcnow().timestamp())}:R>{ping}",
-            f"**{'Urgent' if teen else 'Open'}** · Unclaimed · {'deleted' if deleted else 'still there'}",
+            f"**{'Urgent' if urgent else 'Open'}** · Unclaimed · {'deleted' if deleted else 'still there'}",
             [("member", "Who", f"{author.mention} · {flags} flag{'' if flags == 1 else 's'} so far"),
              ("report", "What Happened", what), ("cases", "Where", message.channel.mention)],
             buttons=action_buttons(message.guild.id, voice, author.id, voice=bool(voice)),
-            thumbnail=author.display_avatar.url,
-            footer=("If someone pressured them into it, it can be sextortion. Report it to Discord at "
-                    "https://dis.gd/request. Take It Down can help stop it spreading." if teen else
-                    "The image isn't shown here on purpose. If it could be illegal, report it to Discord at "
-                    "https://dis.gd/request"))
+            thumbnail=author.display_avatar.url, footer=footer)
         alert = await self.bot.alert_staff(message.guild, view)
         if alert:
             db.create_case(message.guild.id, alert.id, alert.channel.id, case_no, "image", message.channel.id,
-                           author.id, f"Inappropriate image ({worst:.0%} sure)", urgent=teen)
+                           author.id, f"{label} ({how})", urgent=urgent)
 
     # a teen's picture got removed. kind, no blame, and help if someone pushed them into it
     @staticmethod
@@ -202,6 +276,27 @@ class ImageScan(commands.Cog):
             subtitle=f"From {discord.utils.escape_markdown(message.guild.name)}",
             buttons=[discord.ui.Button(label="Take It Down", style=discord.ButtonStyle.link, url=TAKE_IT_DOWN),
                      discord.ui.Button(label="Someone's Threatening Me", custom_id="lkhelp:threat")])
+        try:
+            await message.author.send(view=view, allowed_mentions=discord.AllowedMentions.none())
+            return True
+        except discord.HTTPException:
+            return False    # DMs closed
+
+    # a self-harm image, from anyone. a check-in and somewhere to turn, no blame, nothing said in the chat
+    @staticmethod
+    async def _check_in_dm(message: discord.Message, removed: bool) -> bool:
+        where = message.channel.mention
+        view = ui_kit.card(
+            ui_kit.titled("help", "Are You Okay?"),
+            (f"Lookout removed an image you posted in {where} because it looked like self-harm. " if removed else
+             f"An image you posted in {where} looked like self-harm. ") +
+            "**You're not in trouble,** and nobody in the chat was told.",
+            ("You Don't Have to Handle It Alone", "Talking to someone can help, even if it feels small. It's free and "
+                                                  "private, any time of day."),
+            ("If You're in Danger Right Now", "Call your local emergency number."),
+            subtitle=f"From {discord.utils.escape_markdown(message.guild.name)}",
+            footer="The mods know, so they can check in with you.",
+            buttons=[discord.ui.Button(label="Find a Helpline", style=discord.ButtonStyle.link, url=ui_kit.HELPLINE_URL)])
         try:
             await message.author.send(view=view, allowed_mentions=discord.AllowedMentions.none())
             return True

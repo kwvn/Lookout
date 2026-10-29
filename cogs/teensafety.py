@@ -389,6 +389,8 @@ class TeenSafety(commands.Cog):
             await self._flirty_alert(message, author, teens[0], kind, read_as, removed, s, lang, threat)
             if removed:  # only DM the teen if it actually got deleted
                 db.bump("removed")
+                if threat or has_nude_ask(text):
+                    db.bump("threats")
                 if not nearby:
                     self._share(message, author, teens[0], s)
                 for teen in teens:
@@ -589,6 +591,7 @@ class TeenSafety(commands.Cog):
                                  sexual=not threat)
         if removed:
             db.bump("removed")
+            db.bump("threats")  # threats and picture requests, for /totals
             for teen in teens:
                 await self._heads_up(message, author, teen, threat=threat)
         await self._check_risk(guild, author, s)

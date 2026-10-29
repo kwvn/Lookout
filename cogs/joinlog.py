@@ -77,6 +77,7 @@ class JoinLog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild: discord.Guild):
+        db.bump("joined")  # for /totals
         channel = self._channel()
         if channel is None:
             return
@@ -103,6 +104,7 @@ class JoinLog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild):
+        db.bump("left")
         entry, channel = db.join_entry(guild.id), self._channel()
         db.drop_join(guild.id)
         if channel is None:
