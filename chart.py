@@ -309,9 +309,9 @@ def line_fits(text: str) -> bool:
 
 
 # icon, LOOKOUT, the title, an optional line under it (like the server and what needs fixing), looky on the right
-# None if the icon is missing or the font can't draw the title
+# unless mascot is off. None if the icon is missing or the font can't draw the title
 @lru_cache(maxsize=64)
-def banner(icon: str, title: str, line: str | None = None) -> bytes | None:
+def banner(icon: str, title: str, line: str | None = None, mascot: bool = True) -> bytes | None:
     path = BASE / "assets" / f"{icon}.png"
     if not path.exists() or not can_draw(title, BOLD):
         return None
@@ -321,7 +321,7 @@ def banner(icon: str, title: str, line: str | None = None) -> bytes | None:
     glyph = _glyph(path, 115)
     c.img.paste(glyph, (38 * S, 32 * S), glyph)
     looky = BASE / "assets" / "meerkat" / f"looky_{LOOKY.get(icon, 'watching')}.png"
-    if looky.exists():  # peeking up from the bottom edge
+    if mascot and looky.exists():  # peeking up from the bottom edge
         pic = Image.open(looky).convert("RGBA").resize((168 * S, 168 * S), Image.LANCZOS)
         c.img.paste(pic, ((W - 204) * S, 26 * S), pic)
     x, room = 182, LINE_ROOM
