@@ -116,14 +116,6 @@ _conn.executescript(
         guild_id INTEGER, user_id INTEGER, reason TEXT, created_at REAL, cleared INTEGER DEFAULT 0,
         PRIMARY KEY (guild_id, user_id)
     );
-
-    -- removed features (age-aware voice, /trust, first-contact heads-up, selfie reply block, warning appeals)
-    DROP TABLE IF EXISTS first_contacts;
-    DROP TABLE IF EXISTS trust;
-    DROP TABLE IF EXISTS age_seen;
-    DROP TABLE IF EXISTS teen_photos;
-    DROP TABLE IF EXISTS appeals;
-    DELETE FROM teen_signals WHERE kind NOT IN ('flirty', 'contact', 'teen_report', 'probe', 'private');
     """
 )
 _conn.execute("INSERT OR IGNORE INTO totals VALUES ('since', ?)", (int(time.time()),))
@@ -138,8 +130,8 @@ _GUILD_COLS = {"weekly_summary": "INTEGER DEFAULT 1", "summary_sent_at": "REAL",
                "teen_restrict": "INTEGER DEFAULT 1", "risk_mode": "TEXT DEFAULT 'on'",
                "risk_test_until": "REAL", "last_case": "INTEGER", "tips_dm": "INTEGER DEFAULT 1",
                "nick_check": "INTEGER DEFAULT 1",
-               "alt_catcher": "INTEGER DEFAULT 1", "tips_channel_id": "INTEGER", "flirty_filter": "INTEGER DEFAULT 1",
-               "checkup_score": "INTEGER", "checkup_at": "REAL", "filter_languages": "TEXT DEFAULT 'en'",
+               "alt_catcher": "INTEGER DEFAULT 1", "flirty_filter": "INTEGER DEFAULT 1",
+               "checkup_score": "INTEGER", "filter_languages": "TEXT DEFAULT 'en'",
                "age_check": "INTEGER DEFAULT 1", "adult_channel_id": "INTEGER", "trivia_channel_id": "INTEGER",
                "network": "INTEGER DEFAULT 1"}
 _have = {r[1] for r in _conn.execute("PRAGMA table_info(guilds)")}
@@ -203,7 +195,6 @@ class GuildSettings:
     tips_dm: bool = True                 # teens get the safety tips by DM, once
     nick_check: bool = True  # nickname check
     alt_catcher: bool = True
-    tips_channel_id: int | None = None   # where the safety tips were last posted
     flirty_filter: bool = True  # message filter
     checkup_score: int | None = None     # how many Safety Checkup items passed last time
     filter_languages: str = "en"         # the Message Filter's languages, like "en,es"
@@ -242,7 +233,7 @@ class GuildSettings:
 _COLS = ("staff_channel_id", "staff_role_id", "image_scan", "weekly_summary", "reminder_minutes",
          "report_updates", "panel_channel_id", "young_roles", "older_roles", "adult_roles",
          "no_age_role", "contact_filter", "teen_restrict", "risk_mode", "risk_test_until", "tips_dm",
-         "nick_check", "alt_catcher", "tips_channel_id", "flirty_filter", "checkup_score",
+         "nick_check", "alt_catcher", "flirty_filter", "checkup_score",
          "filter_languages", "age_check", "adult_channel_id", "trivia_channel_id", "network")
 _BOOLS = ("image_scan", "weekly_summary", "report_updates", "contact_filter", "teen_restrict",
           "tips_dm", "nick_check", "alt_catcher", "flirty_filter", "age_check", "network")

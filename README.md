@@ -4,11 +4,16 @@
 
 A teen safety bot for Discord servers where teens and adults hang out together.
 
-It checks replies and mentions from adults to teens and removes the ones that cross the line, plus any contact info sent to teens. Everything else is left alone. Mods get private reports and one place to handle them.
+It checks replies and mentions from adults to teens and removes the ones that cross the line, plus any contact info sent to teens. Threats to share someone's pictures and requests for pictures are removed from anyone, even other teens. Everything else is left alone.
 
-Servers that use Lookout also warn each other through the Lookout Network. If Lookout's filter catches someone in 2 servers, with 2 different teens, other servers' mods get a heads-up when that person shows up. Mods can't add anyone to it.
+- **Images:** inappropriate images are removed where teens can see them, using Discord's own labels too. If one looks like self-harm, that person gets a helpline.
+- **Adults posing as teens:** someone with a teen role who says they're an adult, or whose account is too old for their age role, gets checked like an adult.
+- **Is this safe?:** members can privately check any message, even a DM.
+- **Reports:** members report privately, even a DM they got, and mods handle every case in one place.
 
-Support server: https://discord.gg/BKedYyHgn9
+Servers that use Lookout also warn each other through the Lookout Network. If Lookout's filter catches someone in 2 servers, with 2 different teens, other servers' mods get a heads-up when that person starts chatting there. Mods can't add anyone to it.
+
+Support server: https://discord.gg/lookout
 
 ## Running
 
@@ -42,7 +47,7 @@ If you want to anyway:
 
    `venv\Scripts\python bot.py`
 
-   It prints an invite link with the right permissions. After that, run `/setup` in your server and drag Lookout's role above your members.
+   It prints an invite link with the right permissions. After that, run `/setup` in your server. It checks Lookout's role and permissions for you.
 
 It doesn't need Administrator and it can't ban, kick or manage roles.
 
@@ -54,6 +59,7 @@ It doesn't need Administrator and it can't ban, kick or manage roles.
 - Pillow
 - NumPy
 - NudeNet
+- cryptography
 
 ## Privacy
 

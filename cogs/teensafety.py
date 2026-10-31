@@ -506,8 +506,9 @@ class TeenSafety(commands.Cog):
             title, what = ("Threat to Share Pictures",
                            f"Threatened to share pictures of <@{teen.id}> (under 18). This is how sextortion starts.")
         elif sexual:  # sent by a teen or someone without an age role
-            title, what = ("Sexual Request to a Teen", f"Asked <@{teen.id}> (under 18) for nudes or something sexual. "
-                                                       "Discord doesn't allow this even between two teens.")
+            title, what = ("Inappropriate Request to a Teen",
+                           f"Asked <@{teen.id}> (under 18) for pictures or something inappropriate. Discord doesn't "
+                           "allow this even between two teens.")
         else:
             title, what = "Inappropriate Message", f"Sent an inappropriate message to <@{teen.id}> (under 18)."
         alert_id = await self._case(
@@ -584,7 +585,7 @@ class TeenSafety(commands.Cog):
         db.log(guild.id, author.id, "teen_flirty", (message.content or "")[:200], message.channel.id,
                message_id=message.id)
         why = ("Threatening to share someone's pictures isn't allowed here" if threat else
-               "Asking for nudes or anything sexual isn't allowed with anyone under 18, even between teens")
+               "Asking anyone under 18 for inappropriate pictures or chats isn't allowed, even between teens")
         removed = await self._remove(message, f"Your message in {message.channel.mention} was removed. {why}, and the "
                                               "mods have been told.")
         await self._flirty_alert(message, author, teens[0], "severe", None, removed, s, threat=threat,
@@ -692,12 +693,7 @@ class TeenSafety(commands.Cog):
 
     async def _tips_dm(self, member: discord.Member, s: db.GuildSettings) -> None:
         name = discord.utils.escape_markdown(member.guild.name)
-        buttons = []
-        if s.tips_channel_id:
-            buttons.append(discord.ui.Button(label="Read All Safety Tips", style=discord.ButtonStyle.link,
-                                             url=f"https://discord.com/channels/{member.guild.id}/{s.tips_channel_id}"))
-        buttons.append(discord.ui.Button(label="Safety Center", style=discord.ButtonStyle.link,
-                                         url=ui_kit.SAFETY_CENTER_URL))
+        buttons = [discord.ui.Button(label="Safety Center", style=discord.ButtonStyle.link, url=ui_kit.SAFETY_CENTER_URL)]
         add_app = ui_kit.add_app_button()
         if add_app:
             buttons.append(add_app)

@@ -1,17 +1,14 @@
 import asyncio
 import datetime as dt
 import io
-import logging
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
 import chart
-import config
 import ui_kit
 
-log = logging.getLogger("lookout.demo")
 PREFIX = "lkdemo"
 PAGES = 10
 # which looky each page gets
@@ -59,8 +56,6 @@ START = "lkhelp:demo"  # handled in help.py
 
 
 def demo_card(bot, banner: bool = True) -> discord.ui.LayoutView:
-    invite = discord.utils.oauth_url(bot.user.id, permissions=discord.Permissions(config.INVITE_PERMISSIONS),
-                                     scopes=("bot", "applications.commands"))
     start = discord.ui.Button(label="Start the Demo", custom_id=START)
     return ui_kit.card(
         "Try Lookout",
@@ -75,7 +70,7 @@ def demo_card(bot, banner: bool = True) -> discord.ui.LayoutView:
                             "server"),
         ("Add It to Your Server", ["Add Lookout, then run /setup. It takes about a minute.",
                                    discord.ui.Button(label="Add Lookout to Your Server", style=discord.ButtonStyle.link,
-                                                     url=invite)]),
+                                                     url=ui_kit.invite_url(bot))]),
         subtitle="See everything Lookout does in a few minutes, without adding it to your server.", icon="brand",
         banner=banner)
 
@@ -89,32 +84,8 @@ def _has_start_button(message: discord.Message) -> bool:
 
 
 async def post_demo(interaction: discord.Interaction):
-    bot, channel = interaction.client, interaction.channel
-    if not await bot.is_owner(interaction.user):
-        return await interaction.response.send_message(view=ui_kit.note("Only Lookout's owner can use this."),
-                                                       ephemeral=True)
-    perms = channel.permissions_for(interaction.guild.me)
-    if not (perms.view_channel and perms.send_messages):
-        return await interaction.response.send_message(view=ui_kit.note(
-            "Lookout can't post here. It needs **Send Messages** in this channel."), ephemeral=True)
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    try:
-        view, old = demo_card(bot, banner=perms.attach_files), None
-        if perms.read_message_history:
-            async for message in channel.history(limit=50):
-                if message.author.id == bot.user.id and _has_start_button(message):
-                    old = message
-                    break
-        if old:
-            await old.edit(view=view, attachments=ui_kit.files(view))
-            text = f"**Updated the card in {channel.mention}.**"
-        else:
-            await channel.send(view=view, files=ui_kit.files(view))
-            text = f"**Posted in {channel.mention}.** Run /post-demo here again anytime to update it."
-    except Exception as e:  # say what went wrong instead of thinking forever
-        log.exception("Couldn't post the demo card")
-        text = f"**Couldn't post the card.**\n-# {type(e).__name__}: {e}"[:1900]
-    await interaction.followup.send(view=ui_kit.note(text), ephemeral=True)
+    await ui_kit.post_card(interaction, lambda perms: demo_card(interaction.client, banner=perms.attach_files),
+                           _has_start_button, "card", "Run /post-demo here again anytime to update it.")
 
 
 # only synced to the support server (bot.py)
@@ -355,8 +326,6 @@ class Demo(commands.Cog):
             buttons=buttons + _nav(7))
 
     def _done(self):
-        invite = discord.utils.oauth_url(self.bot.user.id, permissions=discord.Permissions(config.INVITE_PERMISSIONS),
-                                         scopes=("bot", "applications.commands"))
         more = "\n".join([
             "- Reporters hear back when their case is closed",
             "- A Safety Checkup for your server's own settings",
@@ -369,7 +338,8 @@ class Demo(commands.Cog):
                           "-# Four short steps: mod channel · mod role · age roles · Report button"),
             footer="Lookout doesn't need Administrator, and it can't ban, kick or manage roles.",
             buttons=[None, discord.ui.Button(label="Back", custom_id=f"{PREFIX}:go:{PAGES - 1}"),
-                     discord.ui.Button(label="Add Lookout to Your Server", style=discord.ButtonStyle.link, url=invite)],
+                     discord.ui.Button(label="Add Lookout to Your Server", style=discord.ButtonStyle.link,
+                                       url=ui_kit.invite_url(self.bot))],
             brand=True)
 
 

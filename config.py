@@ -36,10 +36,11 @@ HEARTBEAT_URL = os.getenv("HEARTBEAT_URL", "").strip()
 # optional, posts the server count every 30 min
 TOPGG_TOKEN = os.getenv("TOPGG_TOKEN", "").strip()
 
-SUPPORT_URL = "https://discord.gg/BKedYyHgn9"
+SUPPORT_URL = "https://discord.gg/lookout"
 SITE_URL = "https://yoursit.ee/lookout"  # the YourSitee link page
 PRIVACY_URL = "https://mammoth-elbow-750.notion.site/Lookout-Privacy-Policy-cbc29be557c84c9085bf55ac9e90e351"
-# where /totals and /post-demo get synced, looked up from SUPPORT_URL if empty
+TERMS_URL = "https://mammoth-elbow-750.notion.site/Lookout-Terms-of-Service-811dfe2233704bf780b9433ddee23df3"
+# where the owner commands (/post-demo, /post-faq, /totals...) get synced, looked up from SUPPORT_URL if empty
 SUPPORT_GUILD_ID = _int("SUPPORT_GUILD_ID", 0)
 
 DB_PATH = BASE_DIR / "lookout.db"

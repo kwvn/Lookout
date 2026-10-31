@@ -185,11 +185,9 @@ class LookoutBot(commands.AutoShardedBot):
         return emoji
 
     async def on_ready(self):
-        invite = discord.utils.oauth_url(self.user.id, permissions=discord.Permissions(config.INVITE_PERMISSIONS),
-                                         scopes=("bot", "applications.commands"))
         n = len(self.guilds)
         log.info("Logged in as %s in %d server%s", self.user, n, "" if n == 1 else "s")
-        log.info("Invite link: %s", invite)
+        log.info("Invite link: %s", ui_kit.invite_url(self))
 
     async def on_guild_join(self, guild: discord.Guild):
         me = guild.me

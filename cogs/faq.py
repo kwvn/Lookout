@@ -1,5 +1,3 @@
-import logging
-
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -8,17 +6,10 @@ import chart
 import config
 import ui_kit
 
-log = logging.getLogger("lookout.faq")
 PICK = "lkfaq:pick"  # one dropdown per topic: lkfaq:pick:<topic>
 BANNER = "faq-banner.png"
 SOURCE_URL = "https://github.com/kwvn/Lookout"
-TERMS_URL = "https://mammoth-elbow-750.notion.site/Lookout-Terms-of-Service-811dfe2233704bf780b9433ddee23df3"
 SUPPORT_CHANNEL = 1553440549455925319  # in the support server
-
-
-def _invite(bot) -> str:
-    return discord.utils.oauth_url(bot.user.id, permissions=discord.Permissions(config.INVITE_PERMISSIONS),
-                                   scopes=("bot", "applications.commands"))
 
 
 # topic: (name, [(key, question, summary, answer, link)]). answers come from here when picked, so editing one needs
@@ -116,7 +107,7 @@ QUESTIONS = {key: (topic, question, answer, link) for topic, (_, items) in TOPIC
 def _link(bot, kind: str | None) -> discord.ui.Button | None:
     link = discord.ButtonStyle.link
     if kind == "invite":
-        return discord.ui.Button(label="Add Lookout", style=link, url=_invite(bot))
+        return discord.ui.Button(label="Add Lookout", style=link, url=ui_kit.invite_url(bot))
     if kind == "apps":
         return ui_kit.add_app_button()
     if kind == "source":
@@ -124,7 +115,7 @@ def _link(bot, kind: str | None) -> discord.ui.Button | None:
     if kind == "privacy":
         return discord.ui.Button(label="Privacy Policy", style=link, url=config.PRIVACY_URL)
     if kind == "terms":
-        return discord.ui.Button(label="Terms of Service", style=link, url=TERMS_URL)
+        return discord.ui.Button(label="Terms of Service", style=link, url=config.TERMS_URL)
     return None
 
 
@@ -173,32 +164,8 @@ def _is_faq(message: discord.Message) -> bool:
 
 
 async def post_faq(interaction: discord.Interaction):
-    bot, channel = interaction.client, interaction.channel
-    if not await bot.is_owner(interaction.user):
-        return await interaction.response.send_message(view=ui_kit.note("Only Lookout's owner can use this."),
-                                                       ephemeral=True)
-    perms = channel.permissions_for(interaction.guild.me)
-    if not (perms.view_channel and perms.send_messages):
-        return await interaction.response.send_message(view=ui_kit.note(
-            "Lookout can't post here. It needs **Send Messages** in this channel."), ephemeral=True)
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    try:
-        view, old = faq_view(bot), None
-        if perms.read_message_history:
-            async for message in channel.history(limit=50):
-                if message.author.id == bot.user.id and _is_faq(message):
-                    old = message
-                    break
-        if old:
-            await old.edit(view=view, attachments=ui_kit.files(view))
-            text = f"**Updated the FAQ in {channel.mention}.**"
-        else:
-            await channel.send(view=view, files=ui_kit.files(view), allowed_mentions=discord.AllowedMentions.none())
-            text = f"**Posted in {channel.mention}.** Run /post-faq here again after adding or removing a question."
-    except Exception as e:  # say what went wrong instead of thinking forever
-        log.exception("Couldn't post the FAQ")
-        text = f"**Couldn't post the FAQ.**\n-# {type(e).__name__}: {e}"[:1900]
-    await interaction.followup.send(view=ui_kit.note(text), ephemeral=True)
+    await ui_kit.post_card(interaction, lambda perms: faq_view(interaction.client), _is_faq, "FAQ",
+                           "Run /post-faq here again after adding or removing a question.")
 
 
 # only synced to the support server (bot.py)

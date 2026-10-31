@@ -1,5 +1,6 @@
 import datetime
 import io
+import logging
 import re
 
 import discord
@@ -7,6 +8,8 @@ from discord import ui
 
 import chart
 import config
+
+log = logging.getLogger("lookout.ui")
 
 # icon emojis, filled in on startup
 ICONS: dict[str, str] = {}
@@ -299,6 +302,11 @@ def add_app_button() -> ui.Button | None:
     return ui.Button(label="Add to My Apps", style=discord.ButtonStyle.link, url=url) if url else None
 
 
+def invite_url(bot: discord.Client) -> str:
+    return discord.utils.oauth_url(bot.user.id, permissions=discord.Permissions(config.INVITE_PERMISSIONS),
+                                   scopes=("bot", "applications.commands"))
+
+
 # spoilered one-line code copy, nothing inside can break out
 def hidden(text: str | None, limit: int = 1000) -> str:
     flat = " / ".join(line.strip() for line in (text or "").splitlines() if line.strip()) or "(no text)"
@@ -314,6 +322,36 @@ def note(text: str, buttons: list | None = None) -> ui.LayoutView:
         _add_buttons(box, buttons)
         view.add_item(box)
     return view
+
+
+# /post-demo and /post-faq: updates lookout's card in this channel if it's there, otherwise posts a new one.
+# build(perms) makes the view, is_ours(message) spots the old card
+async def post_card(interaction: discord.Interaction, build, is_ours, what: str, again: str) -> None:
+    bot, channel = interaction.client, interaction.channel
+    if not await bot.is_owner(interaction.user):
+        return await interaction.response.send_message(view=note("Only Lookout's owner can use this."), ephemeral=True)
+    perms = channel.permissions_for(interaction.guild.me)
+    if not (perms.view_channel and perms.send_messages):
+        return await interaction.response.send_message(view=note(
+            "Lookout can't post here. It needs **Send Messages** in this channel."), ephemeral=True)
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    try:
+        view, old = build(perms), None
+        if perms.read_message_history:
+            async for message in channel.history(limit=50):
+                if message.author.id == bot.user.id and is_ours(message):
+                    old = message
+                    break
+        if old:
+            await old.edit(view=view, attachments=files(view))
+            text = f"**Updated the {what} in {channel.mention}.**"
+        else:
+            await channel.send(view=view, files=files(view), allowed_mentions=discord.AllowedMentions.none())
+            text = f"**Posted in {channel.mention}.** {again}"
+    except Exception as e:  # say what went wrong instead of thinking forever
+        log.exception("Couldn't post the %s", what)
+        text = f"**Couldn't post the {what}.**\n-# {type(e).__name__}: {e}"[:1900]
+    await interaction.followup.send(view=note(text), ephemeral=True)
 
 
 def staff_notes(message: discord.Message) -> list[ui.TextDisplay]:
