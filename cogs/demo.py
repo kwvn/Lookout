@@ -11,9 +11,10 @@ import config
 import ui_kit
 
 PREFIX = "lkdemo"
-PAGES = 8
+PAGES = 10
 # which looky each page gets
-MOODS = {1: "noted", 2: "think", 3: "watching", 4: "love", 5: "thumbsup", 6: "noted", 7: "party", 8: "wave"}
+MOODS = {1: "noted", 2: "think", 3: "watching", 4: "love", 5: "thumbsup", 6: "sus", 7: "verified", 8: "noted",
+         9: "party", 10: "wave"}
 CLAIMED, WARNED, TIMED_OUT, DISCONNECTED, RESOLVED = 1, 2, 4, 8, 16  # bit flags for the example alert
 
 WEEK = dict(reports=47, images=12, warnings=18, timeouts=9, disconnects=6, opened=31, resolved=28, avg_seconds=14 * 60, still_open=3, daily=[4, 6, 3, 8, 11, 9, 6],
@@ -65,13 +66,15 @@ def demo_card(bot, banner: bool = True) -> discord.ui.LayoutView:
             "Press **Start the Demo** for a private tour with made-up names and example data.\n"
             "-# Only you can see it · Nothing you press affects anyone", accessory=start)]),
         ("What You'll See", "1. How members report a problem, even a DM they got\n2. The alert your mods get. Try the "
-                            "buttons.\n3. What the Message Filter and Contact Info Filter catch\n4. The heads-up a teen "
-                            "gets when a message to them is removed\n5. What your mods get from teen safety\n6. The "
-                            "weekly summary\n7. Mod Stats\n8. How to add Lookout to your server"),
+                            "buttons.\n3. What Lookout removes, from messages to images\n4. The heads-up a teen gets "
+                            "when a message to them is removed\n5. What your mods get from teen safety\n6. How Lookout "
+                            "catches adults posing as teens and repeat offenders\n7. **Is this safe?**, a private check "
+                            "for any message\n8. The weekly summary\n9. Mod Stats\n10. How to add Lookout to your "
+                            "server"),
         ("Add It to Your Server", ["Add Lookout, then run /setup. It takes about a minute.",
                                    discord.ui.Button(label="Add Lookout to Your Server", style=discord.ButtonStyle.link,
                                                      url=invite)]),
-        subtitle="See everything Lookout does in about two minutes, without adding it to your server.", icon="brand",
+        subtitle="See everything Lookout does in a few minutes, without adding it to your server.", icon="brand",
         banner=banner)
 
 
@@ -161,18 +164,22 @@ class Demo(commands.Cog):
         if page == 5:
             return self._mods_get(), []
         if page == 6:
+            return self._repeat(), []
+        if page == 7:
+            return self._is_it_safe(), []
+        if page == 8:
             file = discord.File(io.BytesIO(await self._picture("week")), filename="weekly-summary.png")
             return _card(
-                6, "A Weekly Summary",
+                8, "A Weekly Summary",
                 "**Every Monday, the mods get the week as a picture.**\n-# Type /summary to see the last 7 days "
                 "anytime.",
-                _picture_item(file), buttons=_nav(6)), [file]
-        if page == 7:
+                _picture_item(file), buttons=_nav(8)), [file]
+        if page == 9:
             file = discord.File(io.BytesIO(await self._picture("staff")), filename="mod-stats.png")
             return _card(
-                7, "Mod Stats",
+                9, "Mod Stats",
                 "**See who handles the most cases, and how fast.**\n-# Admins open /summary, then press Mod Stats.",
-                _picture_item(file), buttons=_nav(7)), [file]
+                _picture_item(file), buttons=_nav(9)), [file]
         return self._done(), []
 
     async def _picture(self, which: str) -> bytes:
@@ -262,6 +269,12 @@ class Demo(commands.Cog):
             ("Contact Info Filter", "**Contact info sent to teens gets removed.**\n"
                                     "User replies to a 14 year old with their phone number. It's removed, and they get a "
                                     "DM."),
+            ("From Anyone", "**Threats to share a teen's pictures and requests for pictures are removed, even when "
+                            "another teen sends them.**"),
+            ("Images", "**Inappropriate images are removed in channels teens can see.**\n"
+                       "Lookout also uses Discord's own labels for explicit, gore and self-harm images.\n"
+                       "-# If an image looks like self-harm, that person gets a private message with a helpline, and "
+                       "the mods are told so they can check in."),
             footer="Normal chat between adults and teens is never touched. Lookout doesn't read DMs or listen to voice, "
                    "and only sees a DM someone reports.",
             buttons=_nav(3))
@@ -288,23 +301,57 @@ class Demo(commands.Cog):
                                      "Lookout removed it and kept a copy, so it's still there if they delete the rest. "
                                      "If it was a mistake, the mods press **False Alarm**."),
             ("Warning Signs · #15", "**Several warning signs added up for User:**\n"
-                                    "- Sent an inappropriate message to a teen · 2 times\n"
+                                    "- Asked a teen their age, school or where they live · 2 times\n"
+                                    "- Asked a teen to move to DMs, another app or a call · 1 time\n"
                                     "- Sent contact info to a teen · 1 time\n"
                                     "-# One sign never flags anyone"),
-            ("Keep Away After 2 Reports", "If 2 teens report User, their replies to teens get removed until the mods "
-                                          "press **Lift** or **Keep**.\n-# Teens who joined this week or have a new "
-                                          "account don't count."),
             ("Reported From a DM · #16", "**A teen reported a DM User sent them.**\n"
                                          "It came straight from Discord, so the mods know it's real."),
             footer="This is a demo with made-up names.", buttons=_nav(5))
+
+    @staticmethod
+    def _repeat():
+        return _card(
+            6, "Catching Repeat Offenders",
+            ("Not Really a Teen? · #17", "**User has a teen role, but said they're 19.**\n"
+                                         "From now on, Lookout checks their messages to teens like an adult's. If they "
+                                         "really are a teen, the mods press **They're a Teen**.\n"
+                                         "-# It also notices accounts older than their age role allows."),
+            ("Keep Away After 2 Reports", "If 2 teens report User, their replies to teens get removed until the mods "
+                                          "press **Lift** or **Keep**.\n-# Teens who joined this week or have a new "
+                                          "account don't count."),
+            ("Caught in Other Servers · #18", "**Lookout caught User going after 2 different teens, in 2 other servers "
+                                              "that use Lookout.**\nWhen they start chatting here, the mods get a "
+                                              "heads-up. It never says which servers or what was said.\n"
+                                              "-# This is the Lookout Network. Servers can turn it off in /setup > "
+                                              "Extras."),
+            footer="This is a demo with made-up names.", buttons=_nav(6))
+
+    @staticmethod
+    def _is_it_safe():
+        buttons = [discord.ui.Button(label="Tell the Mods", custom_id=f"{PREFIX}:noop:0", disabled=True)]
+        if url := ui_kit.add_app_url():
+            buttons.append(discord.ui.Button(label="Add Lookout to My Apps", style=discord.ButtonStyle.link, url=url))
+        return _card(
+            7, "Is This Safe?",
+            "**Any member can check a message, even a DM.**\nThey right-click it, then **Apps** > **Is this safe?**. "
+            "Only they see the answer.",
+            ("Example: They Want to Talk Somewhere Else",
+             "Moving the chat to another app or a private place is often the first step for someone who wants you "
+             "alone, away from mods and friends.\n**What to do:** Keep the chat where other people are around. It's "
+             "okay to say no."),
+            subtitle="What a member sees after checking a DM",
+            footer="Lookout only looks at that one message, and doesn't keep it unless they press Tell the Mods. "
+                   "Members add Lookout to their apps first.",
+            buttons=buttons + _nav(7))
 
     def _done(self):
         invite = discord.utils.oauth_url(self.bot.user.id, permissions=discord.Permissions(config.INVITE_PERMISSIONS),
                                          scopes=("bot", "applications.commands"))
         more = "\n".join([
-            "- Inappropriate images are removed from chat",
             "- Reporters hear back when their case is closed",
             "- A Safety Checkup for your server's own settings",
+            "- Trivia about staying safe online",
         ])
         return _card(
             PAGES, "That's Lookout",
