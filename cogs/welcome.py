@@ -49,8 +49,8 @@ def welcome_card(bot, banner: bool = True) -> discord.ui.LayoutView:
                                     f"- Report bugs in <#{BUGS}> and share ideas in <#{IDEAS}>\n"
                                     f"- Hear about updates first in <#{NEWS}>"),
         ("Rules", [discord.ui.Section(
-            "A few simple rules to keep this place friendly and safe.\n-# Only you can see them · By chatting here, "
-            "you agree to them", accessory=discord.ui.Button(label="Read the Rules", custom_id=RULES))]),
+            "A few simple rules to keep this place friendly and safe.\n-# By chatting here, you agree to them",
+            accessory=discord.ui.Button(label="Read the Rules", custom_id=RULES))]),
         footer=f"What Lookout stores, how long it keeps it, and how to get it deleted.\nOn the Lookout Network by "
                f"mistake? Open a post in <#{SUPPORT}>.",
         buttons=[discord.ui.Button(label="Terms of Service", style=link, url=config.TERMS_URL),
