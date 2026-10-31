@@ -23,8 +23,8 @@ log = logging.getLogger("lookout")
 EXTENSIONS = ["cogs.setup", "cogs.help", "cogs.demo", "cogs.staff", "cogs.cases", "cogs.cleanup",
               "cogs.reports", "cogs.reminder", "cogs.summary", "cogs.imagescan", "cogs.teensafety",
               "cogs.totals", "cogs.trivia", "cogs.network", "cogs.joinlog", "cogs.safecheck", "cogs.faq"]
-# rotates every few minutes
-STATUSES = ["Always on watch", "On watch · /help", "Keeping teens safe", "Guarding {servers}"]
+# the "Playing ..." line on the bot's profile, rotates every few minutes
+STATUSES = ["Type /report for help", "Keeping teens safe", "Guarding {servers}", "/setup to get started"]
 STATUS_MINUTES = 5
 SETUP_REMINDER_HOURS = 24  # one nudge if a server still hasn't set Lookout up
 
@@ -49,7 +49,7 @@ class LookoutBot(commands.AutoShardedBot):
             intents=intents,
             allowed_mentions=discord.AllowedMentions.none(),
             member_cache_flags=discord.MemberCacheFlags.from_intents(intents),
-            activity=discord.CustomActivity(name=STATUSES[0]),
+            activity=discord.Game(name=STATUSES[0]),
         )
         self.command_ids: dict[str, int] = {}  # name: id, for command mentions
         self._status_index = 0
@@ -263,7 +263,7 @@ class LookoutBot(commands.AutoShardedBot):
         servers = len(self.guilds)
         text = STATUSES[self._status_index % len(STATUSES)].format(
             servers=f"{servers} server{'' if servers == 1 else 's'}")
-        await self.change_presence(activity=discord.CustomActivity(name=text))
+        await self.change_presence(activity=discord.Game(name=text))
         self._status_index += 1
 
     @rotate_status.before_loop
