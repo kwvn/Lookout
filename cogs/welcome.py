@@ -55,7 +55,7 @@ def welcome_card(bot, banner: bool = True) -> discord.ui.LayoutView:
                f"mistake? Open a post in <#{SUPPORT}>.",
         buttons=[discord.ui.Button(label="Terms of Service", style=link, url=config.TERMS_URL),
                  discord.ui.Button(label="Privacy Policy", style=link, url=config.PRIVACY_URL)],
-        subtitle="The official support server", icon="brand", banner=banner)
+        subtitle="The official support server", icon="brand", banner=banner, looky="wave")
 
 
 def rules_view() -> discord.ui.LayoutView:  # a box per rule

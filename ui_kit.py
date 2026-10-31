@@ -126,10 +126,10 @@ def _plain(text: str) -> str | None:
 # the subtitle goes in the banner when it's plain enough, otherwise under it. line: drawn in the banner instead,
 # the subtitle then only shows if the banner can't be drawn
 def head(view: ui.LayoutView, title: str, subtitle: str | None = None, icon: str | None = None,
-         thumbnail: str | None = None, banner: bool = True, line: str | None = None) -> None:
+         thumbnail: str | None = None, banner: bool = True, line: str | None = None, looky: str | None = None) -> None:
     if line is None and subtitle and icon and banner:
         line = _plain(subtitle)
-    data = chart.banner(icon, title, line) if icon and banner else None
+    data = chart.banner(icon, title, line, looky=looky) if icon and banner else None
     if data:
         name = _banner_name(title)
         view.add_item(ui.MediaGallery(discord.MediaGalleryItem(
@@ -154,7 +154,8 @@ def files(view: ui.LayoutView) -> list[discord.File]:
 def card(title: str | None, *sections, subtitle: str | None = None, thumbnail: str | None = None,
          image: str | list[str] | None = None, footer: str | None = None, buttons: list | None = None,
          brand: bool = False, spoiler: bool = False, image_text: str | list[str] | None = None,
-         icon: str | None = None, banner: bool = True, line: str | None = None) -> ui.LayoutView:
+         icon: str | None = None, banner: bool = True, line: str | None = None,
+         looky: str | None = None) -> ui.LayoutView:
     view = ui.LayoutView(timeout=None)
     if image:
         images = image if isinstance(image, list) else [image]
@@ -162,7 +163,7 @@ def card(title: str | None, *sections, subtitle: str | None = None, thumbnail: s
         view.add_item(ui.MediaGallery(*[discord.MediaGalleryItem(url, description=text, spoiler=spoiler)
                                         for url, text in zip(images, texts)]))
     if title:
-        head(view, title, subtitle, icon, thumbnail, banner, line)
+        head(view, title, subtitle, icon, thumbnail, banner, line, looky)
 
     for section in sections:
         if not section:
