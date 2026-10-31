@@ -58,9 +58,9 @@ def welcome_card(bot, banner: bool = True) -> discord.ui.LayoutView:
         subtitle="The official support server", icon="brand", banner=banner)
 
 
-def rules_view() -> discord.ui.LayoutView:
-    text = "\n\n".join(f"**{i}. {name}**\n{body}" for i, (name, body) in enumerate(RULE_LIST, 1))
-    return ui_kit.card("Server Rules", text, subtitle="Breaking these can get you warned, timed out or banned.",
+def rules_view() -> discord.ui.LayoutView:  # a box per rule
+    return ui_kit.card("Server Rules", *(f"**{name}**\n{body}" for name, body in RULE_LIST),
+                       subtitle="Breaking these can get you warned, timed out or banned.",
                        footer="By chatting here, you agree to these rules.")
 
 
