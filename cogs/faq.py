@@ -1,3 +1,5 @@
+import logging
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -6,6 +8,7 @@ import chart
 import config
 import ui_kit
 
+log = logging.getLogger("lookout.faq")
 PICK = "lkfaq:pick"  # one dropdown per topic: lkfaq:pick:<topic>
 BANNER = "faq-banner.png"
 SOURCE_URL = "https://github.com/kwvn/Lookout"
@@ -179,16 +182,23 @@ async def post_faq(interaction: discord.Interaction):
         return await interaction.response.send_message(view=ui_kit.note(
             "Lookout can't post here. It needs **Send Messages** in this channel."), ephemeral=True)
     await interaction.response.defer(ephemeral=True, thinking=True)
-    view = faq_view(bot)
-    if perms.read_message_history:
-        async for message in channel.history(limit=50):
-            if message.author.id == bot.user.id and _is_faq(message):
-                await message.edit(view=view, attachments=ui_kit.files(view))
-                return await interaction.followup.send(view=ui_kit.note(f"**Updated the FAQ in {channel.mention}.**"),
-                                                       ephemeral=True)
-    await channel.send(view=view, files=ui_kit.files(view), allowed_mentions=discord.AllowedMentions.none())
-    await interaction.followup.send(view=ui_kit.note(f"**Posted in {channel.mention}.** Run /post-faq here again "
-                                                     "after adding or removing a question."), ephemeral=True)
+    try:
+        view, old = faq_view(bot), None
+        if perms.read_message_history:
+            async for message in channel.history(limit=50):
+                if message.author.id == bot.user.id and _is_faq(message):
+                    old = message
+                    break
+        if old:
+            await old.edit(view=view, attachments=ui_kit.files(view))
+            text = f"**Updated the FAQ in {channel.mention}.**"
+        else:
+            await channel.send(view=view, files=ui_kit.files(view), allowed_mentions=discord.AllowedMentions.none())
+            text = f"**Posted in {channel.mention}.** Run /post-faq here again after adding or removing a question."
+    except Exception as e:  # say what went wrong instead of thinking forever
+        log.exception("Couldn't post the FAQ")
+        text = f"**Couldn't post the FAQ.**\n-# {type(e).__name__}: {e}"[:1900]
+    await interaction.followup.send(view=ui_kit.note(text), ephemeral=True)
 
 
 # only synced to the support server (bot.py)

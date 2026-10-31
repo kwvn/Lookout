@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import io
+import logging
 
 import discord
 from discord import app_commands
@@ -10,6 +11,7 @@ import chart
 import config
 import ui_kit
 
+log = logging.getLogger("lookout.demo")
 PREFIX = "lkdemo"
 PAGES = 10
 # which looky each page gets
@@ -96,16 +98,23 @@ async def post_demo(interaction: discord.Interaction):
         return await interaction.response.send_message(view=ui_kit.note(
             "Lookout can't post here. It needs **Send Messages** in this channel."), ephemeral=True)
     await interaction.response.defer(ephemeral=True, thinking=True)
-    view = demo_card(bot, banner=perms.attach_files)
-    if perms.read_message_history:
-        async for message in channel.history(limit=50):
-            if message.author.id == bot.user.id and _has_start_button(message):
-                await message.edit(view=view, attachments=ui_kit.files(view))
-                return await interaction.followup.send(view=ui_kit.note(f"**Updated the card in {channel.mention}.**"),
-                                                       ephemeral=True)
-    await channel.send(view=view, files=ui_kit.files(view))
-    await interaction.followup.send(view=ui_kit.note(f"**Posted in {channel.mention}.** Run /post-demo here again "
-                                                     "anytime to update it."), ephemeral=True)
+    try:
+        view, old = demo_card(bot, banner=perms.attach_files), None
+        if perms.read_message_history:
+            async for message in channel.history(limit=50):
+                if message.author.id == bot.user.id and _has_start_button(message):
+                    old = message
+                    break
+        if old:
+            await old.edit(view=view, attachments=ui_kit.files(view))
+            text = f"**Updated the card in {channel.mention}.**"
+        else:
+            await channel.send(view=view, files=ui_kit.files(view))
+            text = f"**Posted in {channel.mention}.** Run /post-demo here again anytime to update it."
+    except Exception as e:  # say what went wrong instead of thinking forever
+        log.exception("Couldn't post the demo card")
+        text = f"**Couldn't post the card.**\n-# {type(e).__name__}: {e}"[:1900]
+    await interaction.followup.send(view=ui_kit.note(text), ephemeral=True)
 
 
 # only synced to the support server (bot.py)
