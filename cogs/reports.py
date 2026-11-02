@@ -77,14 +77,10 @@ def _report_modal(category: str, upload: bool, member_id: int = 0) -> discord.ui
 def panel_view() -> discord.ui.LayoutView:
     view = discord.ui.LayoutView(timeout=None)
     button = discord.ui.Button(label="Report a Problem", custom_id=f"{PANEL}:open")
-    ui_kit.head(view, "Report a Problem", None, "report")
+    ui_kit.head(view, "Report a Problem", None, "report", looky="noted")
     text = "**Something wrong?**\nTell the mods privately. Only they see your report, and nobody else knows you sent it."
     view.add_item(discord.ui.Container(discord.ui.Section(text, accessory=button)))
-    lines = ["-# You can also type /report, or right-click someone or a message, then **Apps**."]
-    if url := ui_kit.add_app_url():
-        lines.append(f"-# Got a DM that's not okay? [Add Lookout to your apps](<{url}>), then right-click it > "
-                     "**Apps** > **Report Message to Mods**.")
-    view.add_item(discord.ui.TextDisplay("\n".join(lines)))
+    view.add_item(discord.ui.TextDisplay("-# You can also type /report."))  # reporting a DM is in /help and the FAQ
     return view
 
 
