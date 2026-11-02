@@ -19,11 +19,24 @@ TOPICS = {
         ("setup", "How do I set up Lookout?", "Setup takes about a minute.",
          "Add Lookout to your server, then press **Set Up** on its welcome message or run /setup. Pick your mod channel, "
          "your mod role and your age roles. That's all it needs.", "invite"),
-        ("teen", "How does Lookout know who's a teen?", "Your age roles, or Teen by Default.",
+        ("scan", "Can we try Lookout before it does anything?", "Yes, with a free 7-day Safety Scan.",
+         "Add Lookout and press **Free Safety Scan** on its welcome message, or in /setup. For 7 days it only "
+         "watches: nothing is removed, nobody gets a message and your mods aren't pinged. Then your mods get a report "
+         "of everything it would have done, with a link to each message. Turn it on from there, or don't.\n-# The "
+         "scan-only invite doesn't even give Lookout permission to delete messages. Threats to share a kid's pictures "
+         "and self-harm images still go to your mods right away.", "scan"),
+        ("teen", "How does Lookout know who's a teen?", "Your age roles, Teen by Default, or Auto-Detect.",
          "The safest way is **Teen by Default**: you only pick an 18+ role, and everyone without it is protected as a "
          "teen. Nobody gets a role that shows they're under 18.\n-# Give the 18+ role out in an age-restricted channel, "
-         "so only adults Discord has verified can get it. Servers that already have teen and adult roles can use those.",
-         None),
+         "so only adults Discord has verified can get it. Servers that already have teen and adult roles can use those."
+         "\n\nNo age roles at all? Use **Auto-Detect**. Members who say they're under 18, like \"im 14\" or \"8th "
+         "grade\", are protected from then on, and so are names like \"mia 14yo\".", None),
+        ("auto", "How does Auto-Detect work?", "Members who say they're under 18 get protected.",
+         "When a member says their age, their school year or the year they were born, Lookout remembers it for that "
+         "server and protects them if they're under 18. It goes up by a year every year, and is deleted after 12 "
+         "months. Lookout only saves the age and a link to the message, never the message itself.\n\nSaying an adult "
+         "age sticks. If someone said they're 24 and later says they're 15, Lookout keeps treating them as an adult "
+         "and tells your mods.", None),
         ("perms", "What permissions does Lookout need?", "No Administrator. It can't ban or kick.",
          "Lookout doesn't need Administrator, and it can't ban, kick or manage roles. It removes messages and alerts "
          "your mods. Your mods make every decision.", None),
@@ -57,6 +70,11 @@ TOPICS = {
          "role allows, or is on the Lookout Network. From then on, their messages to teens are checked like an "
          "adult's, and your mods get an alert.\n\nIf they really are a teen, a mod can press **They're a Teen** to "
          "undo it.", None),
+        ("roblox", "Does Lookout work for Roblox communities?", "Yes, without flagging normal Roblox chat.",
+         "Roblox servers rarely have age roles, so use **Auto-Detect**. Kids who say they're 10 or older are "
+         "protected, and kids asking each other's age or to play together never counts against anyone.\n\nAn adult "
+         "offering a kid Robux or money in return for something counts as a warning sign, and members can check a "
+         "DM like that with **Is this safe?**.", None),
         ("reports", "Can false reports restrict a member?", "Not from new accounts or alts.",
          "If 2 different teens report the same adult, Lookout keeps that adult away from teens until your mods decide. "
          "Teens who joined in the last week or have a new account don't count, so alt accounts can't trigger it.",
@@ -91,7 +109,17 @@ TOPICS = {
         ("network", "What is the Lookout Network?", "Servers warning each other about repeat offenders.",
          "If Lookout's filter catches someone sending inappropriate messages to teens in 2 servers, with 2 different "
          "teens, other servers that use Lookout get a heads-up when that person starts chatting there. Mods can't add "
-         "anyone, and the heads-up never says which servers or what was said.", None),
+         "anyone, and the heads-up never says which servers or what was said.\n\nIt also catches what one server "
+         "can't see: an adult showing warning signs toward 3 or more teens across other servers, like asking their "
+         "age, asking them to DM, or offering Robux for something. And someone who says they're 15 in one server "
+         "but said they're 24 in another gets checked like an adult.", None),
+        ("fishing", "Why tell us about warning signs from other servers?", "One server sees one question, not the "
+                                                                           "pattern.",
+         "Predators rarely stick to one server. They join lots of them and go after a different kid in each one. In "
+         "each server it looks like one normal question. Lookout is in all of them, so it can see the pattern and "
+         "warn the servers that person is in.\n-# It takes 3 teens in 2 other servers and more than just asking "
+         "ages. Servers that have had Lookout under 2 weeks don't count, so nobody can make a server just to put "
+         "someone on it.", None),
         ("mistake", "What if I'm listed by mistake?", "Contact us and we'll review it.",
          f"Open a post in <#{SUPPORT_CHANNEL}>. We'll check what Lookout caught and remove you if it was a mistake.",
          None),
@@ -108,6 +136,8 @@ def _link(bot, kind: str | None) -> discord.ui.Button | None:
     link = discord.ButtonStyle.link
     if kind == "invite":
         return discord.ui.Button(label="Add Lookout", style=link, url=ui_kit.invite_url(bot))
+    if kind == "scan":
+        return discord.ui.Button(label="Add Lookout for a Safety Scan", style=link, url=ui_kit.invite_url(bot, scan=True))
     if kind == "apps":
         return ui_kit.add_app_button()
     if kind == "source":

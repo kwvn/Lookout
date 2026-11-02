@@ -23,7 +23,7 @@ log = logging.getLogger("lookout")
 EXTENSIONS = ["cogs.setup", "cogs.help", "cogs.demo", "cogs.staff", "cogs.cases", "cogs.cleanup",
               "cogs.reports", "cogs.reminder", "cogs.summary", "cogs.imagescan", "cogs.teensafety",
               "cogs.totals", "cogs.trivia", "cogs.network", "cogs.joinlog", "cogs.safecheck", "cogs.faq",
-              "cogs.welcome"]
+              "cogs.welcome", "cogs.scan"]
 # the "Playing ..." line on the bot's profile, rotates every few minutes
 STATUSES = ["Type /report for help", "Keeping teens safe", "Guarding {servers}", "/setup to get started"]
 STATUS_MINUTES = 5
@@ -209,9 +209,14 @@ class LookoutBot(commands.AutoShardedBot):
         title = ui_kit.titled(ui_kit.mascot("wave"), "Thanks for Adding Lookout")
         view = ui_kit.boxes(title, "Lookout starts protecting your members once it's set up. It takes about a minute.", [
             ("settings", "3 Quick Steps", "**1.** Pick a private mod channel for alerts\n**2.** Pick your mod role\n"
-                                          "**3.** Pick your 18+ role, or your teen roles\n-# Only admins can do this.",
+                                          "**3.** Pick your age roles. No age roles? Lookout can spot teens on its "
+                                          "own\n-# Only admins can do this.",
              [discord.ui.Button(label="Set Up", custom_id="lksetup:start"),
               discord.ui.Button(label="See a Demo First", custom_id="lkhelp:demo")]),
+            ("summary", "Not Sure Yet?", "Run a free **Safety Scan**. For 7 days Lookout only watches, then shows your "
+                                         "mods everything it would have caught in this server, with links.\n"
+                                         "-# Nothing is removed and nobody gets a message during the scan.",
+             [discord.ui.Button(label="Free Safety Scan", custom_id="lksetup:scan")]),
             ("brand", "What Lookout Does", "- Removes inappropriate messages and contact info adults send to teens\n"
                                            "- Removes explicit pictures, stickers and links\n"
                                            "- Lets members report privately to your mods\n"

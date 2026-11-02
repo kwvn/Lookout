@@ -9,6 +9,7 @@ from discord.ext import commands
 import config
 import db
 import ui_kit
+from cogs import scan
 
 try:
     import wordlists
@@ -21,7 +22,11 @@ MEERKATS = len(list((config.ASSETS / "meerkat").glob("looky_*.png")))  # how man
 
 REMINDERS = [(0, "Off"), (5, "One ping after 5 minutes"), (10, "One ping after 10 minutes"),
              (15, "One ping after 15 minutes"), (30, "One ping after 30 minutes")]
-AGE_MODES = [("tbd", "Teen by Default (safest)"), ("roles", "Teen and Adult Roles")]
+AGE_MODES = [("tbd", "Teen by Default (safest)"), ("roles", "Teen and Adult Roles"),
+             ("auto", "Auto-Detect (no age roles needed)")]
+AUTO_TIP = ("Members who say they're under 18 are protected, like \"im 14\", \"8th grade\" or \"born in 2011\", and "
+            "so are names like \"mia 14yo\". Everyone else counts as an adult.")
+AUTO_FOR = "Good for big servers and Roblox communities."
 ADULT_TIP = ("**Tip:** make an age-restricted channel with a reaction role for 18+. Discord only lets verified adults "
              "into age-restricted channels, so only real adults can get the role.")
 PROTECTIONS = [
@@ -30,14 +35,17 @@ PROTECTIONS = [
     ("teen_restrict", "Keep Away After 2 Reports", "If 2 teens report the same adult, their replies to teens get "
                                                    "removed until the mods decide. Teens who joined this week or have "
                                                    "a new account don't count."),
-    ("nick_check", "Nickname Check", "Teens get a tip when their nickname shows their age, school or city."),
+    ("nick_check", "Oversharing Check", "Teens get a tip when they say their age in chat, or their nickname shows "
+                                        "their age, school or city."),
     ("tips_dm", "Safety Tips DM", "Teens get the safety tips once, the first time Lookout sees them."),
     ("alt_catcher", "Alt Catcher", "Lets the mods know when someone who left during a case is back on a new account."),
 ]
 TOGGLES = {name: (title, text) for name, title, text in PROTECTIONS} | {
-    "network": ("Lookout Network", "Lets the mods know when someone Lookout caught sending inappropriate messages to "
-                                   "teens in other servers shows up here. Turning it off also stops sharing."),
-    "age_check": ("Age Mismatch", "Lets the mods know when someone says an age that doesn't match their age role."),
+    "network": ("Lookout Network", "Lets the mods know when someone who went after teens in other servers shows up "
+                                   "here, and when someone says they're a teen here but gave an adult age somewhere "
+                                   "else. Turning it off also stops sharing."),
+    "age_check": ("Age Mismatch", "Lets the mods know when someone says an age that doesn't match their age role, "
+                                  "or says two different ages."),
     "report_updates": ("Reporter Updates", "Reporters get a DM when the mods close their case."),
     "image_scan": ("Image Filter", "Removes inappropriate images in channels teens can see, as soon as they're "
                                    "posted."),
@@ -96,6 +104,11 @@ def _button(label: str, action: str, arg: str = "") -> discord.ui.Button:
 def _roles(s: db.GuildSettings, *fields: str) -> str:
     ids = set().union(*(s.role_ids(f) for f in fields))
     return " ".join(f"<@&{r}>" for r in sorted(ids)) if ids else "Not set"
+
+
+def _spotted(s: db.GuildSettings) -> str:
+    n = db.seen_teens(s.guild_id)
+    return f"{n} teen{'' if n == 1 else 's'} spotted so far"
 
 
 # one line of a page: **Title** · status, a small line under it, one button on the right
@@ -171,12 +184,13 @@ def home(guild: discord.Guild, s: db.GuildSettings, note: str | None = None):
         teen = _block("Teen Safety", [
             ("Status", f"On, {on} of {len(PROTECTIONS) + 1} protections"),
             ("Teens", f"Everyone without {_roles(s, 'adult_roles')} (Teen by Default)") if s.teen_default else
+            ("Teens", f"Auto-Detect, {_spotted(s)}") if s.auto_ages else
             ("Teen Roles", _roles(s, "young_roles", "older_roles")),
-            ("Adult Roles", None if s.teen_default else _roles(s, "adult_roles")),
+            ("Adult Roles", None if s.teen_default or s.auto_ages else _roles(s, "adult_roles")),
             ("Warning Signs", _risk_text(s))], _button("Edit", "page", "teen"))
     else:
         teen = _block("Teen Safety", [("Status", "Off")], _button("Set Up", "page", "teen"),
-                      "Pick your age roles to turn on the filters.")
+                      "Pick your age roles, or use Auto-Detect if you don't have any, to turn on the filters.")
 
     panel = _channel(guild, s.panel_channel_id)
     reports = _block("Reports", [("Report Button", f"Posted in {panel}" if panel else "Not posted yet"),
@@ -211,8 +225,20 @@ def home(guild: discord.Guild, s: db.GuildSettings, note: str | None = None):
         status = f"{fix[0]} needs a fix"
     else:
         status = f"{', '.join(fix[:-1])} and {fix[-1]} need a fix"
-    return _card(guild, "Settings", status,
-                 [staff, teen, reports, f"### Permissions\n{perms}", checkup, extra], footer=note)
+    blocks, nav = [staff, teen, reports, f"### Permissions\n{perms}", checkup, extra], []
+    if s.scanning:  # only watching for now. a scan doesn't need the permissions it would remove things with
+        day = min(scan.SCAN_DAYS, int((time.time() - s.scan_started) / 86400) + 1)
+        status = "Safety Scan, report sent" if s.scan_reported else f"Safety Scan, day {day} of {scan.SCAN_DAYS}"
+        found = len(db.scan_finds(guild.id, since=s.scan_started))
+        blocks.insert(0, _block("Safety Scan", [
+            ("Status", "Report sent, still watching" if s.scan_reported else
+             f"Day {day} of {scan.SCAN_DAYS}, report <t:{int(s.scan_until)}:R>"),
+            ("Found So Far", str(found))],
+            discord.ui.Button(label="See Report", custom_id=f"{scan.PREFIX}:report"),
+            "Lookout is only watching. Nothing is removed and nobody gets a message until you turn it on."))
+        blocks[blocks.index(f"### Permissions\n{perms}")] = None
+        nav = [discord.ui.Button(label="Turn It On", custom_id=f"{scan.PREFIX}:on")]
+    return _card(guild, "Settings", status, [b for b in blocks if b], footer=note, nav=nav)
 
 
 def staff_page(guild, s: db.GuildSettings):
@@ -232,13 +258,17 @@ def staff_page(guild, s: db.GuildSettings):
 def teen_page(guild, s: db.GuildSettings):
     on = sum(getattr(s, f) for f, _, _ in PROTECTIONS) + (s.risk_now() != "off")
     if not s.teen_safety:
-        who = (("Pick your 18+ role" if s.teen_default else "Pick at least one teen role")
+        who = (("Pick your 18+ role" if s.teen_default else "Pick at least one teen role, or use Auto-Detect")
                + ". Until then, nothing below is working yet")
     elif s.teen_default:
         who = f"Everyone without {_roles(s, 'adult_roles')} (Teen by Default)"
         adult = _channel(guild, s.adult_channel_id)
         if adult:
             who += f" · 18+ button in {adult}"
+    elif s.auto_ages:
+        who = f"Members who say they're under 18 (Auto-Detect) · {_spotted(s)}"
+        if s.young_roles or s.older_roles:
+            who += f" · Teen roles: {_roles(s, 'young_roles', 'older_roles')}"
     else:
         who = f"Teen roles: {_roles(s, 'young_roles', 'older_roles')} · Adult roles: {_roles(s, 'adult_roles')}"
     ages = _row("Who Counts as a Teen", None, who,
@@ -248,7 +278,7 @@ def teen_page(guild, s: db.GuildSettings):
     nicknames = guild.me.guild_permissions.manage_nicknames
     return _card(guild, "Teen Safety", f"On, {on} of {len(PROTECTIONS) + 1} protections" if s.teen_safety else "Off",
                  [ages, *(_toggle(s, f) for f, _, _ in PROTECTIONS), risk],
-                 footer=None if nicknames else "Nickname Check can only fix a nickname for a teen if Lookout has "
+                 footer=None if nicknames else "Oversharing Check can only fix a nickname for a teen if Lookout has "
                                                "**Manage Nicknames**.",
                  nav=[_button("Back", "page", "home"), _button("Languages", "page", "langs")])
 
@@ -362,8 +392,17 @@ def ages_page(guild, s: db.GuildSettings):
         ids = set().union(s.role_ids(field), *(s.role_ids(f) for f in also))
         return discord.ui.RoleSelect(custom_id=f"{PREFIX}:set:{field}", placeholder=placeholder,
                                      min_values=0, max_values=10, default_values=[discord.Object(r) for r in ids])
-    mode = ["**How Ages Work**\n-# Teen by Default protects everyone who doesn't have an 18+ role",
-            _select("age_mode", AGE_MODES, "tbd" if s.teen_default else "roles", "How ages work")]
+    current = "tbd" if s.teen_default else "auto" if s.auto_ages else "roles"
+    mode = ["**How Ages Work**\n-# Teen by Default protects everyone who doesn't have an 18+ role. Auto-Detect works "
+            "without any roles.", _select("age_mode", AGE_MODES, current, "How ages work")]
+    if s.auto_ages:
+        return _card(guild, "Age Roles", "Who Lookout treats as a teen",
+                     [mode, f"**Spotted So Far** · {_spotted(s)}\n-# {AUTO_TIP}",
+                      ["**Age Roles** · Optional\n-# If your server has them, Lookout goes by the role first",
+                       roles("young_roles", "Pick the teen roles...", "older_roles"),
+                       roles("adult_roles", "Pick the 18+ roles...")],
+                      _toggle(s, "age_check")],
+                     nav=[_button("Back", "page", "teen")])
     if s.teen_default:
         adult = _channel(guild, s.adult_channel_id)
         where = f"Posted in {adult} · {len(db.verified_adults(s.guild_id))} adults so far" if adult else "Not posted yet"
@@ -414,6 +453,7 @@ def extras_page(guild, s: db.GuildSettings):
                        _button("Add Emojis", "emojis")),
                   f"**Your Data**\n-# Cases and history: kept {config.RETENTION_DAYS} days\n"
                   f"-# Warning signs: kept {db.SIGNAL_DAYS} days\n"
+                  f"-# Ages members said, for Auto-Detect: kept {db.AGE_DAYS // 30} months\n"
                   f"-# Lookout Network: kept {db.NETWORK_DAYS // 30} months\n"
                   "-# Older records are deleted automatically. Everything except Lookout Network records is deleted "
                   "if Lookout leaves the server."],
@@ -432,9 +472,10 @@ def risk_page(guild, s: db.GuildSettings):
                   "**Flagged in the Last 30 Days**\n" + ("\n".join(rows) or "-# Nobody yet."),
                   "**How It Works**\n-# Lookout adds these up over 30 days: inappropriate messages to teens, contact "
                   "info sent to teens, reports from teens, and adults asking a teen's age, school or where they live, "
-                  "or asking them to move to DMs, another app or a call. Those last two are never removed and can't "
-                  "flag anyone by themselves. Normal chat never counts. One sign never flags anyone. A case only "
-                  "opens when several add up."],
+                  "asking them to move to DMs, another app or a call, or offering them Robux or money in return for "
+                  "something. Those last three are never removed, and with Auto-Detect they only count from someone "
+                  "known to be an adult. Normal chat never counts. One sign never flags anyone. A case only opens "
+                  "when several add up."],
                  nav=[_button("Back", "page", "teen")])
 
 
@@ -483,6 +524,9 @@ async def safety_checkup(guild: discord.Guild, s: db.GuildSettings) -> list[tupl
                         "Anyone can pick your 18+ role in Onboarding, teens too. Give it out in an age-restricted "
                         "channel instead, so only adults Discord has verified can get it.\n"
                         "-# **Server Settings** > **Onboarding**"))
+    elif s.auto_ages and not asked:
+        results.append(("Age Question", True, "Auto-Detect spots teens from chat, so an age question is optional. "
+                                              "Age roles from Onboarding would still help it catch everyone."))
     elif asked is None:
         results.append(("Age Question", False, "Lookout couldn't read your Onboarding. Make sure new members get "
                                                "asked their age there, with options that give out your age roles.\n"
@@ -502,7 +546,7 @@ async def safety_checkup(guild: discord.Guild, s: db.GuildSettings) -> list[tupl
                     "teen roles there.\n-# **Edit Channel** > **Permissions**"))
 
     # discord doesn't allow dating spaces for anyone under 18, a server can be taken down for one
-    viewers = teen_roles or ([guild.default_role] if s.teen_default else [])
+    viewers = teen_roles or ([guild.default_role] if s.teen_default or s.auto_ages else [])
     dating = [c for c in guild.text_channels if DATING.search(c.name) and not getattr(c, "nsfw", False)
               and any(c.permissions_for(r).view_channel for r in viewers)]
     results.append(("Dating Channels", not dating, "Teens can't see any dating or selfie channels." if not dating else
@@ -552,7 +596,35 @@ def step_channel(note: str | None = None):
                                     placeholder="Pick the mod channel...")
     return _step(1, "Mod Channel",
                  "Pick the channel where alerts should go. Keep it private, so only your mods can see it.\n"
-                 "-# No mod channel yet? Create a private one, then press Set Up again.", [menu], note)
+                 "-# No mod channel yet? Create a private one, then press Set Up again.\n"
+                 "-# Not sure yet? A free Safety Scan only watches for 7 days, then shows you what Lookout would have "
+                 "caught.", [menu, _button("Free Safety Scan Instead", "scan")], note)
+
+
+def scan_step(note: str | None = None):
+    menu = discord.ui.ChannelSelect(custom_id=f"{PREFIX}:scanchannel", channel_types=[discord.ChannelType.text],
+                                    placeholder="Pick the mod channel...")
+    return ui_kit.card(
+        "Free Safety Scan",
+        ("How It Works", "For 7 days Lookout only watches. It doesn't remove anything, doesn't message anyone and "
+                         "doesn't ping your mods. Then your mods get a report of everything it would have done, with a "
+                         "link to each message.\n-# Threats to share a kid's pictures and self-harm images still go "
+                         "to your mods right away."),
+        ("Where Should the Report Go?", ["Pick a private channel only your mods can see."
+                                         + (f"\n\n**{note}**" if note else ""), menu]),
+        subtitle="7 days, nothing changes in your server", icon="settings")
+
+
+def scan_started(s: db.GuildSettings):
+    ages = (f"Your age roles: {_roles(s, 'young_roles', 'older_roles')}" if s.young_roles else
+            "Auto-Detect: members who say they're under 18, like \"im 14\" or \"8th grade\"")
+    return ui_kit.card(
+        ui_kit.titled(ui_kit.mascot("watching", "brand"), "Safety Scan Started"),
+        f"Lookout is watching quietly. Your report comes <t:{int(s.scan_until)}:R> in <#{s.staff_channel_id}>.",
+        ("Until Then", "Nothing is removed, nobody gets a message and nobody is pinged.\n-# Threats to share a kid's "
+                       "pictures and self-harm images still go to your mods right away."),
+        ("Who Counts as a Kid", f"{ages}\n-# You can change this in /setup."),
+        buttons=[_button("Open Settings", "page", "home")])
 
 
 def step_role(s: db.GuildSettings, note: str | None = None):
@@ -590,7 +662,9 @@ def step_age_mode():
                              accessory=_button("Use This", "gmode", "tbd"))
     roles = discord.ui.Section("**Teen and Adult Roles**\n-# Pick both. Use this if your server already has roles "
                                "like 13-17 and 18+.", accessory=_button("Use These", "gmode", "roles"))
-    return ui_kit.card("Set Up Lookout", ("Age Roles", ["How does your server mark ages?", tbd, roles]),
+    auto = discord.ui.Section(f"**Auto-Detect** (no age roles needed)\n-# {AUTO_TIP} {AUTO_FOR}",
+                              accessory=_button("Use This", "gmode", "auto"))
+    return ui_kit.card("Set Up Lookout", ("Age Roles", ["How does your server mark ages?", tbd, roles, auto]),
                        subtitle="Step 3 of 4", line="Step 3 of 4", icon="settings")
 
 
@@ -697,6 +771,32 @@ class Setup(commands.Cog):
             return await interaction.response.send_message(view=view, files=ui_kit.files(view), ephemeral=True,
                                                            allowed_mentions=discord.AllowedMentions.none())
 
+        # free safety scan, from the welcome message or the first setup step
+        if action == "scan":
+            if s.configured and not s.scanning:
+                return await tell("**Lookout is already on here.** A Safety Scan is for trying it before it does "
+                                  "anything.")
+            view = scan_step()
+            if interaction.message and interaction.message.flags.ephemeral:
+                return await show(view)
+            return await interaction.response.send_message(view=view, files=ui_kit.files(view), ephemeral=True)
+        if action == "scanchannel":
+            channel = guild.get_channel(int(values[0])) if values else None
+            if not can_post(channel):
+                return await show(scan_step("Lookout can't post in that channel. Give it View Channel and Send "
+                                            "Messages, or pick a different one."))
+            s.staff_channel_id = channel.id
+            if not s.teen_safety:  # age roles if it can find them, otherwise auto-detect, no roles needed
+                teen, adult = guess_age_roles(guild)
+                if teen:
+                    self._set_roles(s, "young_roles", [str(r) for r in teen])
+                    self._set_roles(s, "adult_roles", [str(r) for r in adult])
+                else:
+                    s.no_age_role = "auto"
+            scan.start(s, user.id)
+            saved("safety scan started")
+            return await show(scan_started(s))
+
         # first-time steps
         if action == "channel":
             channel = guild.get_channel(int(values[0])) if values else None
@@ -717,7 +817,7 @@ class Setup(commands.Cog):
                     return await show(step_role(s, "Pick your actual mod role, not @everyone or a bot's role."))
                 s.staff_role_id = role.id
                 saved("mod role, in the setup steps")
-            if s.teen_safety:
+            if s.teen_safety and not s.auto_ages:
                 return await show(step_adult(s) if s.teen_default else step_ages(s, guild, manual=True))
             return await show(step_age_mode())
         if action == "gmode":
@@ -727,6 +827,9 @@ class Setup(commands.Cog):
             saved(f"age mode: {arg}, in the setup steps")
             if arg == "tbd":
                 return await show(step_adult(s))
+            if arg == "auto":
+                return await show(step_panel("Auto-Detect is on. Lookout now protects members who say they're "
+                                             "under 18."))
             if not s.teen_safety:
                 await find_age_roles(guild)
             return await show(step_ages(s, guild))
@@ -832,13 +935,13 @@ class Setup(commands.Cog):
         saved(arg)
         await show(PAGES[PAGE_OF.get(arg, "home")](guild, s))
 
-    # teen by default or teen and adult roles
+    # teen by default, teen and adult roles, or auto-detect
     @staticmethod
     def _set_mode(s: db.GuildSettings, mode: str) -> None:
         was_on = s.teen_safety
-        if mode == "tbd":
-            s.no_age_role = "teen"
-        elif s.teen_default:
+        if mode in ("tbd", "auto"):
+            s.no_age_role = "teen" if mode == "tbd" else "auto"
+        elif s.teen_default or s.auto_ages:
             s.no_age_role = "adult"
         if s.teen_safety and not was_on and s.risk_mode == "test":
             s.risk_test_until = time.time() + TEST_DAYS * 86400

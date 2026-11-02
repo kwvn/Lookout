@@ -116,6 +116,31 @@ _conn.executescript(
         guild_id INTEGER, user_id INTEGER, reason TEXT, created_at REAL, cleared INTEGER DEFAULT 0,
         PRIMARY KEY (guild_id, user_id)
     );
+    -- auto-detect: the age a member said they are ("im 14", "8th grade"), as of said_at, so it moves with time.
+    -- source is "said", "school", "born" or "mod". place is "channel:message", never the text
+    CREATE TABLE IF NOT EXISTS seen_ages (
+        guild_id INTEGER, user_id INTEGER, age INTEGER, source TEXT, place TEXT, said_at REAL,
+        PRIMARY KEY (guild_id, user_id)
+    );
+    -- "you shared your age" tip, once per member per server
+    CREATE TABLE IF NOT EXISTS age_tips (
+        guild_id INTEGER, user_id INTEGER, created_at REAL,
+        PRIMARY KEY (guild_id, user_id)
+    );
+    -- lookout network: one "asking teens in other servers" heads-up per member per server
+    CREATE TABLE IF NOT EXISTS fishing_alerts (
+        guild_id INTEGER, user_id INTEGER, created_at REAL,
+        PRIMARY KEY (guild_id, user_id)
+    );
+    -- safety scan: what lookout would have done while it was only watching. a link to the message, never its text
+    CREATE TABLE IF NOT EXISTS scan_finds (
+        guild_id INTEGER, kind TEXT, user_id INTEGER, other_id INTEGER, link TEXT, created_at REAL
+    );
+    CREATE INDEX IF NOT EXISTS sf_guild ON scan_finds (guild_id, created_at);
+    -- the network looks people up across servers
+    CREATE INDEX IF NOT EXISTS ts_any ON teen_signals (user_id, created_at);
+    CREATE INDEX IF NOT EXISTS sa_user ON seen_ages (user_id);
+    CREATE INDEX IF NOT EXISTS va_user ON verified_adults (user_id);
     """
 )
 _conn.execute("INSERT OR IGNORE INTO totals VALUES ('since', ?)", (int(time.time()),))
@@ -133,7 +158,8 @@ _GUILD_COLS = {"weekly_summary": "INTEGER DEFAULT 1", "summary_sent_at": "REAL",
                "alt_catcher": "INTEGER DEFAULT 1", "flirty_filter": "INTEGER DEFAULT 1",
                "checkup_score": "INTEGER", "filter_languages": "TEXT DEFAULT 'en'",
                "age_check": "INTEGER DEFAULT 1", "adult_channel_id": "INTEGER", "trivia_channel_id": "INTEGER",
-               "network": "INTEGER DEFAULT 1"}
+               "network": "INTEGER DEFAULT 1", "scan_started": "REAL", "scan_until": "REAL",
+               "scan_reported": "INTEGER DEFAULT 0", "scan_by": "INTEGER"}
 _have = {r[1] for r in _conn.execute("PRAGMA table_info(guilds)")}
 for _col, _type in _GUILD_COLS.items():
     if _col not in _have:
@@ -187,7 +213,7 @@ class GuildSettings:
     young_roles: str | None = None       # teen roles
     older_roles: str | None = None  # old 16-17 roles
     adult_roles: str | None = None       # 18+
-    no_age_role: str = "adult"           # members with no age role count as "adult", "teen" or "ignore"
+    no_age_role: str = "adult"           # members with no age role count as "adult", "teen", "ignore" or "auto"
     contact_filter: bool = True
     teen_restrict: bool = True  # keep away after 2 reports
     risk_mode: str = "on"                # Warning Signs: off, test or on
@@ -202,6 +228,16 @@ class GuildSettings:
     adult_channel_id: int | None = None  # where the 18+ button was posted
     trivia_channel_id: int | None = None  # the only channel /trivia runs in
     network: bool = True                 # lookout network: shares catches and gets heads-ups
+    # safety scan: lookout only watches, then reports what it would have done. scan_until is when the report is due,
+    # scan_by who started it. both None once it's turned on
+    scan_started: float | None = None
+    scan_until: float | None = None
+    scan_reported: bool = False
+    scan_by: int | None = None
+
+    @property
+    def scanning(self) -> bool:
+        return self.scan_started is not None
 
     @property
     def configured(self) -> bool:
@@ -215,9 +251,15 @@ class GuildSettings:
     def teen_default(self) -> bool:
         return self.no_age_role == "teen"
 
+    # auto-detect: no roles needed. members who say they're under 18 or show it in their name are protected,
+    # everyone else without an age role counts as an adult
+    @property
+    def auto_ages(self) -> bool:
+        return self.no_age_role == "auto"
+
     @property
     def teen_safety(self) -> bool:
-        return bool(self.young_roles or self.older_roles
+        return bool(self.young_roles or self.older_roles or self.auto_ages
                     or (self.teen_default and (self.adult_roles or self.adult_channel_id)))
 
     @property
@@ -234,7 +276,8 @@ _COLS = ("staff_channel_id", "staff_role_id", "image_scan", "weekly_summary", "r
          "report_updates", "panel_channel_id", "young_roles", "older_roles", "adult_roles",
          "no_age_role", "contact_filter", "teen_restrict", "risk_mode", "risk_test_until", "tips_dm",
          "nick_check", "alt_catcher", "flirty_filter", "checkup_score",
-         "filter_languages", "age_check", "adult_channel_id", "trivia_channel_id", "network")
+         "filter_languages", "age_check", "adult_channel_id", "trivia_channel_id", "network",
+         "scan_started", "scan_until", "scan_reported", "scan_by")
 _BOOLS = ("image_scan", "weekly_summary", "report_updates", "contact_filter", "teen_restrict",
           "tips_dm", "nick_check", "alt_catcher", "flirty_filter", "age_check", "network")
 
@@ -250,6 +293,7 @@ def get_settings(guild_id: int) -> GuildSettings:
     s.no_age_role = s.no_age_role or "adult"
     s.risk_mode = s.risk_mode or "on"
     s.filter_languages = s.filter_languages or "en"
+    s.scan_reported = bool(s.scan_reported)
     return s
 
 
@@ -316,6 +360,10 @@ def purge_old() -> int:
     _conn.execute("DELETE FROM leavers WHERE left_at < ?", (cutoff,))
     _conn.execute("DELETE FROM alt_alerts WHERE created_at < ?", (cutoff,))
     _conn.execute("DELETE FROM fake_teens WHERE created_at < ?", (cutoff,))
+    _conn.execute("DELETE FROM seen_ages WHERE said_at < ?", (time.time() - AGE_DAYS * 86400,))
+    _conn.execute("DELETE FROM age_tips WHERE created_at < ?", (time.time() - AGE_DAYS * 86400,))
+    _conn.execute("DELETE FROM fishing_alerts WHERE created_at < ?", (cutoff,))
+    _conn.execute("DELETE FROM scan_finds WHERE created_at < ?", (cutoff,))
     for table in ("network_catches", "network_alerts"):
         _conn.execute(f"DELETE FROM {table} WHERE created_at < ?", (time.time() - NETWORK_DAYS * 86400,))
     _conn.commit()
@@ -612,7 +660,8 @@ def clear_member(guild_id: int, user_id: int, what: str) -> int:
             _conn.execute("DELETE FROM alert_actions WHERE message_id=?", (mid,))
             _conn.execute("DELETE FROM reporters WHERE message_id=?", (mid,))
         _conn.execute("DELETE FROM alerts WHERE guild_id=? AND target_id=?", (guild_id, user_id))
-        for table in ("teen_signals", "risk_flags", "nick_tips", "leavers", "alt_alerts", "network_catches"):
+        for table in ("teen_signals", "risk_flags", "nick_tips", "leavers", "alt_alerts", "network_catches",
+                      "seen_ages", "age_tips", "fishing_alerts", "scan_finds"):
             _conn.execute(f"DELETE FROM {table} WHERE guild_id=? AND user_id=?", (guild_id, user_id))
         _conn.commit()
         return cur.rowcount + len(ids)
@@ -644,7 +693,7 @@ def delete_event(guild_id: int, event_id: int) -> tuple | None:
 # teen safety
 
 TEEN_TABLES = ("teen_signals", "restrictions", "risk_flags", "nudged", "nick_tips", "leavers", "alt_alerts",
-               "verified_adults", "fake_teens")
+               "verified_adults", "fake_teens", "seen_ages", "age_tips", "fishing_alerts", "scan_finds")
 
 
 def get_meta(key: str) -> str | None:
@@ -768,6 +817,36 @@ def first_nudge(guild_id: int, user_id: int) -> bool:
     return cur.rowcount == 1
 
 
+AGE_DAYS = 365          # how long an age someone said counts, after that they have to say it again
+
+
+# user id: (age, source, place, said_at) for everyone in the server who said their age
+def seen_ages(guild_id: int) -> dict[int, tuple[int, str, str | None, float]]:
+    rows = _conn.execute("SELECT user_id, age, source, place, said_at FROM seen_ages WHERE guild_id=? AND said_at>=?",
+                         (guild_id, time.time() - AGE_DAYS * 86400))
+    return {uid: (age, source, place, said_at) for uid, age, source, place, said_at in rows}
+
+
+# how many of them are under 18 now
+def seen_teens(guild_id: int) -> int:
+    now = time.time()
+    return sum(age + int((now - said_at) / (365.25 * 86400)) < 18 for age, *_, said_at in seen_ages(guild_id).values())
+
+
+def save_seen_age(guild_id: int, user_id: int, age: int, source: str, place: str | None) -> float:
+    now = time.time()
+    _conn.execute("INSERT OR REPLACE INTO seen_ages VALUES (?, ?, ?, ?, ?, ?)",
+                  (guild_id, user_id, age, source, place, now))
+    _conn.commit()
+    return now
+
+
+def age_tip_once(guild_id: int, user_id: int) -> bool:
+    cur = _conn.execute("INSERT OR IGNORE INTO age_tips VALUES (?, ?, ?)", (guild_id, user_id, time.time()))
+    _conn.commit()
+    return cur.rowcount == 1
+
+
 def nick_tipped(guild_id: int, user_id: int, nick: str) -> bool:
     row = _conn.execute("SELECT nick FROM nick_tips WHERE guild_id=? AND user_id=?", (guild_id, user_id)).fetchone()
     if row and unseal(row[0]) == nick:
@@ -862,10 +941,73 @@ def network_alert_once(guild_id: int, user_id: int) -> bool:
     return cur.rowcount == 1
 
 
+# fishing: warning signs toward teens in other servers. one looks normal, the same account in several servers doesn't
+FISHING_DAYS = 14
+FISHING_KINDS = ("probe", "private", "gift", "contact", "flirty", "teen_report")
+
+
+# (guild, kind, teen) for each warning sign in the last 2 weeks, skip_guild left out
+def network_signals(user_id: int, skip_guild: int | None = None) -> list[tuple[int, str, int]]:
+    return [r for r in _conn.execute(
+        f"SELECT guild_id, kind, other_id FROM teen_signals WHERE user_id=? AND created_at>=? AND guild_id IS NOT ?"
+        f" AND kind IN ({','.join('?' * len(FISHING_KINDS))})",
+        (user_id, time.time() - FISHING_DAYS * 86400, skip_guild, *FISHING_KINDS)) if r[2]]
+
+
+# members with warning signs in 2 or more servers lately, the only ones worth looking up when they talk
+def multi_server_members() -> set[int]:
+    return {r[0] for r in _conn.execute(
+        f"SELECT user_id FROM teen_signals WHERE created_at>=? AND kind IN ({','.join('?' * len(FISHING_KINDS))})"
+        " GROUP BY user_id HAVING COUNT(DISTINCT guild_id) >= 2", (time.time() - FISHING_DAYS * 86400, *FISHING_KINDS))}
+
+
+def fishing_alert_once(guild_id: int, user_id: int) -> bool:
+    cur = _conn.execute("INSERT OR IGNORE INTO fishing_alerts VALUES (?, ?, ?)", (guild_id, user_id, time.time()))
+    _conn.commit()
+    return cur.rowcount == 1
+
+
+# an adult age they gave in one of `guilds`, other than skip_guild: the oldest age they said there with auto-detect,
+# or 18 for the 18+ button. None if neither
+def adult_elsewhere(user_id: int, skip_guild: int, guilds: set[int]) -> int | None:
+    now, said = time.time(), []
+    for gid, age, source, at in _conn.execute("SELECT guild_id, age, source, said_at FROM seen_ages WHERE user_id=?"
+                                              " AND guild_id!=? AND said_at>=?",
+                                              (user_id, skip_guild, now - AGE_DAYS * 86400)):
+        if gid in guilds and source != "mod" and age + int((now - at) / (365.25 * 86400)) >= 18:
+            said.append(age)
+    if said:
+        return max(said)
+    pressed = _conn.execute("SELECT guild_id FROM verified_adults WHERE user_id=? AND guild_id!=?", (user_id, skip_guild))
+    return 18 if any(gid in guilds for (gid,) in pressed) else None
+
+
+# safety scan
+
+def add_scan_find(guild_id: int, kind: str, user_id: int | None, other_id: int | None, link: str | None) -> None:
+    _conn.execute("INSERT INTO scan_finds VALUES (?, ?, ?, ?, ?, ?)",
+                  (guild_id, kind, user_id, other_id, link, time.time()))
+    _conn.commit()
+
+
+def scan_finds(guild_id: int, since: float = 0) -> list[dict]:
+    keys = ("kind", "user_id", "other_id", "link", "created_at")
+    rows = _conn.execute(f"SELECT {', '.join(keys)} FROM scan_finds WHERE guild_id=? AND created_at>=?"
+                         " ORDER BY created_at DESC", (guild_id, since))
+    return [dict(zip(keys, r)) for r in rows]
+
+
+def due_scans(now: float) -> list[int]:
+    return [r[0] for r in _conn.execute("SELECT guild_id FROM guilds WHERE scan_started IS NOT NULL"
+                                        " AND COALESCE(scan_reported, 0)=0 AND scan_until<=?", (now,))]
+
+
 # an accepted appeal
 def clear_network(user_id: int) -> int:
     cur = _conn.execute("DELETE FROM network_catches WHERE user_id=?", (user_id,))
     _conn.execute("DELETE FROM network_alerts WHERE user_id=?", (user_id,))
+    _conn.execute("DELETE FROM fishing_alerts WHERE user_id=?", (user_id,))
+    _conn.execute("DELETE FROM teen_signals WHERE user_id=? AND kind IN ('probe', 'private', 'gift')", (user_id,))
     _conn.commit()
     return cur.rowcount
 

@@ -10,12 +10,17 @@ SHOWN = 10  # catches listed at once
 
 
 def record_view(bot, user_id: int, name: str, record: dict) -> discord.ui.LayoutView:
-    catches = record["catches"]
-    if not catches:
+    catches, signs = record["catches"], db.network_signals(user_id)
+    if not catches and not signs:
         return ui_kit.note(f"**{name}** isn't on the Lookout Network. Lookout hasn't caught them anywhere.")
     n = len(catches)
     state = ("**On the network.** Lookout servers get a heads-up when they show up." if record["listed"] else
              f"**Not on the network.** It takes {db.NETWORK_SERVERS} servers and {db.NETWORK_TEENS} different teens.")
+    servers, teens = len({g for g, _, _ in signs}), len({t for _, _, t in signs})
+    if signs:  # going after teens in several servers, see teensafety._fishing_check
+        state += (f"\n**Warning signs, last {db.FISHING_DAYS} days:** toward {teens} teen{'' if teens == 1 else 's'} in "
+                  f"{servers} server{'' if servers == 1 else 's'}. Taking them off clears the age, Roblox and private "
+                  "chat ones.")
     lines = []
     for catch in catches[:SHOWN]:
         guild = bot.get_guild(catch["guild_id"])
@@ -29,7 +34,7 @@ def record_view(bot, user_id: int, name: str, record: dict) -> discord.ui.Layout
         f"{state}\n**{n}** removed message{'' if n == 1 else 's'} in **{record['servers']}** "
         f"server{'' if record['servers'] == 1 else 's'}, to **{record['teens']}** different "
         f"teen{'' if record['teens'] == 1 else 's'}.",
-        ("What Lookout Caught", discord.ui.TextDisplay("\n".join(lines)[:4000])),  # not tidied, it's evidence
+        ("What Lookout Caught", discord.ui.TextDisplay("\n".join(lines)[:4000])) if lines else None,  # evidence, as is
         footer="Take them off if the filter got it wrong or it looks like they were set up.",
         buttons=[discord.ui.Button(label="Take Off the Network", custom_id=f"{PREFIX}:clear:{user_id}")])
 

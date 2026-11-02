@@ -303,8 +303,9 @@ def add_app_button() -> ui.Button | None:
     return ui.Button(label="Add to My Apps", style=discord.ButtonStyle.link, url=url) if url else None
 
 
-def invite_url(bot: discord.Client) -> str:
-    return discord.utils.oauth_url(bot.user.id, permissions=discord.Permissions(config.INVITE_PERMISSIONS),
+def invite_url(bot: discord.Client, scan: bool = False) -> str:
+    perms = config.SCAN_PERMISSIONS if scan else config.INVITE_PERMISSIONS
+    return discord.utils.oauth_url(bot.user.id, permissions=discord.Permissions(perms),
                                    scopes=("bot", "applications.commands"))
 
 

@@ -6,12 +6,15 @@ A teen safety bot for Discord servers where teens and adults hang out together.
 
 It checks replies and mentions from adults to teens and removes the ones that cross the line, plus any contact info sent to teens. Threats to share someone's pictures and requests for pictures are removed from anyone, even other teens. Everything else is left alone.
 
+- **Free Safety Scan:** for 7 days Lookout only watches, then the mods get a report of everything it would have caught, with links. Nothing is removed and nobody gets a message until a server turns it on. Threats to share a kid's pictures and self-harm images still go to the mods right away.
+- **No age roles needed:** with Auto-Detect, members who say they're under 18 ("im 14", "8th grade", "born in 2011") or show it in their name are protected from then on. If someone said an adult age and later says they're a teen, they stay an adult and the mods hear about it.
+- **Roblox communities:** Auto-Detect protects kids who say they're 10 or older, and an adult offering a kid Robux or money in return for something counts as a warning sign. Kids talking to each other never counts.
 - **Images:** inappropriate images are removed where teens can see them, using Discord's own labels too. If one looks like self-harm, that person gets a helpline.
 - **Adults posing as teens:** someone with a teen role who says they're an adult, or whose account is too old for their age role, gets checked like an adult.
 - **Is this safe?:** members can privately check any message, even a DM.
 - **Reports:** members report privately, even a DM they got, and mods handle every case in one place.
 
-Servers that use Lookout also warn each other through the Lookout Network. If Lookout's filter catches someone in 2 servers, with 2 different teens, other servers' mods get a heads-up when that person starts chatting there. Mods can't add anyone to it.
+Servers that use Lookout also warn each other through the Lookout Network. If Lookout's filter catches someone in 2 servers, with 2 different teens, other servers' mods get a heads-up when that person starts chatting there. It also catches what one server can't see: an adult showing warning signs toward 3 or more teens across other servers, and someone who says they're a teen in one server but gave an adult age in another. Mods can't add anyone to it.
 
 Support server: https://discord.gg/lookout
 
@@ -63,7 +66,7 @@ It doesn't need Administrator and it can't ban, kick or manage roles.
 
 ## Privacy
 
-Records are deleted after 90 days, warning signs after 30 and Lookout Network records after a year. Removing the bot deletes that server's data, except its Lookout Network records.
+Records are deleted after 90 days, warning signs after 30, and Lookout Network records and ages members said after a year. Removing the bot deletes that server's data, except its Lookout Network records.
 
 [Privacy Policy](https://mammoth-elbow-750.notion.site/Lookout-Privacy-Policy-cbc29be557c84c9085bf55ac9e90e351) · [Terms of Service](https://mammoth-elbow-750.notion.site/Lookout-Terms-of-Service-811dfe2233704bf780b9433ddee23df3)
 

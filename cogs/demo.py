@@ -296,15 +296,19 @@ class Demo(commands.Cog):
             ("Not Really a Teen? · #17", "**User has a teen role, but said they're 19.**\n"
                                          "From now on, Lookout checks their messages to teens like an adult's. If they "
                                          "really are a teen, the mods press **They're a Teen**.\n"
-                                         "-# It also notices accounts older than their age role allows."),
+                                         "-# It also notices accounts older than their age role allows, and someone "
+                                         "who said they're 24 and later says they're 15."),
             ("Keep Away After 2 Reports", "If 2 teens report User, their replies to teens get removed until the mods "
                                           "press **Lift** or **Keep**.\n-# Teens who joined this week or have a new "
                                           "account don't count."),
             ("Caught in Other Servers · #18", "**Lookout caught User going after 2 different teens, in 2 other servers "
                                               "that use Lookout.**\nWhen they start chatting here, the mods get a "
-                                              "heads-up. It never says which servers or what was said.\n"
-                                              "-# This is the Lookout Network. Servers can turn it off in /setup > "
-                                              "Extras."),
+                                              "heads-up. It never says which servers or what was said."),
+            ("Going After Teens in Other Servers · #19",
+             "**In 4 other servers, User asked 6 different teens their age, to move to DMs, or offered them Robux "
+             "for something.**\nEach server only saw one normal-looking question. Lookout saw the pattern, so the "
+             "mods here know before anything happens.\n-# This is the Lookout Network. Servers can turn it off in "
+             "/setup > Extras."),
             footer="This is a demo with made-up names.", buttons=_nav(6))
 
     @staticmethod
@@ -327,6 +331,7 @@ class Demo(commands.Cog):
 
     def _done(self):
         more = "\n".join([
+            "- No age roles? Auto-Detect protects members who say they're under 18",
             "- Reporters hear back when their case is closed",
             "- A Safety Checkup for your server's own settings",
             "- Trivia about staying safe online",
@@ -336,10 +341,15 @@ class Demo(commands.Cog):
             ("Also Included", more),
             ("Set It Up", "**Add Lookout, then press Set Up.**\n"
                           "-# Four short steps: mod channel · mod role · age roles · Report button"),
+            ("Not Sure Yet?", "**Run a free 7-day Safety Scan.** Lookout only watches, then shows your mods everything "
+                              "it would have caught in your server.\n-# Nothing is removed and nobody gets a message "
+                              "during the scan."),
             footer="Lookout doesn't need Administrator, and it can't ban, kick or manage roles.",
             buttons=[None, discord.ui.Button(label="Back", custom_id=f"{PREFIX}:go:{PAGES - 1}"),
                      discord.ui.Button(label="Add Lookout to Your Server", style=discord.ButtonStyle.link,
-                                       url=ui_kit.invite_url(self.bot))],
+                                       url=ui_kit.invite_url(self.bot)),
+                     discord.ui.Button(label="Free Safety Scan", style=discord.ButtonStyle.link,
+                                       url=ui_kit.invite_url(self.bot, scan=True))],
             brand=True)
 
 

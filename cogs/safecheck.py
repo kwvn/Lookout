@@ -36,6 +36,11 @@ VERDICTS = {
         "Moving the chat to another app or a private place is often the first step for someone who wants you alone, "
         "away from mods and friends.",
         "Keep the chat where other people are around. It's okay to say no."),
+    "gift": (
+        "They're Offering Robux for Something",
+        "Robux, Nitro or money in return for something, from someone you only know online, is a common way to get "
+        "kids to send pictures or talk somewhere private.",
+        "You don't owe them anything. Don't do what they ask, block them, and tell an adult you trust."),
     "personal": (
         "They're Asking Personal Questions",
         "Questions about your age, school or where you live can be how someone works out who you are and where to "
@@ -64,6 +69,8 @@ def verdict(text: str) -> str | None:
     sign = ts.soft_sign(text)
     if sign == "private" or ts.has_contact(text):
         return "move"
+    if sign == "gift":
+        return "gift"
     if sign == "probe":
         return "personal"
     return None

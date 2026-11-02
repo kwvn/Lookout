@@ -21,6 +21,9 @@ IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
 NSFW_CLASSES = {"FEMALE_BREAST_EXPOSED", "FEMALE_GENITALIA_EXPOSED", "MALE_GENITALIA_EXPOSED",
                 "ANUS_EXPOSED", "BUTTOCKS_EXPOSED"}
 MAX_GIF_FRAMES = 6
+# a small file can be a huge picture: a 170 KB png at 13000x13000 takes over a gig of ram to decode.
+# bigger than this (after the jpeg shortcut) gets skipped, discord's own marks still cover it
+MAX_PIXELS = 30_000_000
 MAX_LINKS = 4  # linked images checked per message
 GIF_PICKER = ("tenor.com", "giphy.com")  # discord's gif picker, already filtered on their side
 TAKE_IT_DOWN = "https://takeitdown.ncmec.org"
@@ -47,8 +50,10 @@ class ImageScan(commands.Cog):
             if self._detector is None:
                 from nudenet import NudeDetector
                 self._detector = NudeDetector()
-            img = Image.open(io.BytesIO(data))
+            img = Image.open(io.BytesIO(data))  # only reads the header, nothing is decoded yet
             img.draft("RGB", (1280, 1280))  # way faster for big jpegs
+            if img.width * img.height > MAX_PIXELS:
+                return 0.0
             # seek instead of collecting frames, pillow reuses the same image object
             frames = getattr(img, "n_frames", 1)
             best = 0.0
@@ -189,15 +194,20 @@ class ImageScan(commands.Cog):
         if len(self._done) > 5000:
             self._done = dict.fromkeys(list(self._done)[-2500:])
         author = message.author
+        if s.scanning and kind != "self_harm":  # a safety scan saves it for the report. self-harm can't wait a week
+            db.add_scan_find(message.guild.id, "image", author.id, None, message.jump_url)
+            return
         teens = self.bot.get_cog("TeenSafety")
         teen = bool(s.teen_safety and teens and isinstance(author, discord.Member) and teens.is_teen(author, s))
         label, removed_title, found_title = KINDS[kind]
 
-        try:
-            await message.delete()
-            deleted = True
-        except discord.HTTPException:
-            deleted = False
+        deleted = False
+        if not s.scanning:
+            try:
+                await message.delete()
+                deleted = True
+            except discord.HTTPException:
+                pass
         if deleted:
             db.bump("images")
 
@@ -218,6 +228,8 @@ class ImageScan(commands.Cog):
 
         flags = db.count_flags(message.guild.id, author.id)
         what = (f"{label} ({how}), removed" if deleted
+                else f"{label} ({how}). **Not removed,** Lookout is only running a Safety Scan here · "
+                     f"[Jump to It]({message.jump_url})" if s.scanning
                 else f"{label} ({how}). **Not removed.** Lookout needs Manage Messages · [Jump to It]({message.jump_url})")
         if forwarded:
             what += "\n-# It was forwarded."

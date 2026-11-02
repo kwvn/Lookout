@@ -37,6 +37,31 @@ REPORTER_DAYS = 7  # a teen's report only counts toward Keep Away after a week i
 NETWORK_JOINED_DAYS = 14  # a server only shares with the lookout network after having lookout this long
 NETWORK_MEMBERS = 50  # and with at least this many members
 MIN_SIGNUP_AGE = 9  # almost nobody makes an account younger, so an older account than that allows isn't a teen's
+FISHING_SERVERS = 2  # lookout network: warning signs in at least this many other servers
+FISHING_TEENS = 3    # toward at least this many different teens
+FISHING_LABELS = {"probe": "Asked teens their age, school or where they live",
+                  "private": "Asked teens to move to DMs, another app or a call",
+                  "gift": "Offered teens Robux or money in return for something",
+                  "contact": "Sent teens contact info",
+                  "flirty": "Sent teens inappropriate messages, which Lookout removed",
+                  "teen_report": "Got reported by teens"}
+
+# safety scan: these wait for the report instead of going to the mods ("" = already saved when it would have
+# been removed). threats to share pictures and anything a member asked for still go right away
+SCAN_FINDS = {"Inappropriate Message": "", "Inappropriate Request to a Teen": "", "Warning Signs": "warning_signs",
+              "Not Really a Teen?": "fake_teen", "Said Two Different Ages": "two_ages", "Age Mismatch": "age_mismatch",
+              "Possible Alt Account": "alt", "Caught in Other Servers": "network",
+              "Going After Teens in Other Servers": "fishing", "Kept Away From Teens": "keep_away"}
+
+# robux, nitro or money for something: "ill give you 1000 robux if you...", "robux if u...", "ill pay you to...".
+# gifting a friend robux is normal, so it only counts when it's in return for something.
+# a server can swap it for its own in wordlists.py (GIFT)
+_YOU = r"(?:you|u|ya)\b(?!['’])"
+GIFT = getattr(wordlists, "GIFT", None) or re.compile(
+    rf"\b(?:give|gift|send|buy)\w*\s+{_YOU}\s*(?:\d[\d,.]*\s*k?\s*)?(?:robux|rbx|nitro|gift\s*cards?|v-?bucks|money|"
+    rf"cash)?\s*(?:if|for)\s+{_YOU}"
+    rf"|\b(?:robux|rbx|nitro|money|cash)\s+(?:if|for)\s+{_YOU}"
+    rf"|\bi'?ll\s+pay\s+{_YOU}(?!\s+back)", re.I)
 
 # nickname info. cities only count next to an age or school, never as the first word (Austin, Dallas...)
 # "mia 14" and "14yo" are ages, "Sniper13" isn't
@@ -69,13 +94,28 @@ SAYS_AGE = re.compile(
     rf"|\bi (?:just )?turned\s+(\d{{1,2}}){_AGE_END}"
     r"|^[ \t]*age[ \t]*[:=\-][ \t]*(\d{1,2})\b", re.I | re.M)
 
-# kind: (points, max points, label). probe and private can only reach 6 together, so they never flag anyone alone
+# school years and birth years: "im in 8th grade", "i'm a sophomore in high school", "im in year 9", "i was born in 2011"
+_IM = rf"{_NOT_ME}\b(?:i'?m|i am)\s+(?:only\s+|just\s+|currently\s+|still\s+)?"
+SAYS_GRADE = re.compile(rf"{_IM}in\s+(?:the\s+)?(?:([6-9]|1[0-2])(?:st|nd|rd|th)\s+grade|grade\s+([6-9]|1[0-2])\b"
+                        r"|year\s+([7-9]|1[0-3])\b)", re.I)
+SAYS_SCHOOL = re.compile(rf"{_IM}(?:in\s+(middle school|junior high|jr\.? high|high school)\b"
+                         r"|an?\s+(freshman|sophomore|junior)\s+in\s+(?:high school|hs)\b)", re.I)
+SAYS_BORN = re.compile(rf"{_NOT_ME}\bi\s+was\s+born\s+in\s+((?:19|20)\d\d)\b", re.I)
+SCHOOL_AGES = {"middle school": 13, "junior high": 13, "jr high": 13, "jr. high": 13, "high school": 15,
+               "freshman": 14, "sophomore": 15, "junior": 16}
+# a name that says they're a teen, for auto-detect. stricter than the nickname tip: "mia 14yo" and "jake 2011" count,
+# "Agent 17" doesn't
+NAME_AGE = re.compile(r"(?<!\d)(1[3-7])\s*(?:yo|y/o|y\.o\.?|yrs?(?:\s*old)?|years?\s*old)\b", re.I)
+
+# kind: (points, max points, label). probe and private only reach 6 together, so it takes a third kind of sign,
+# like offering robux, before someone gets flagged
 WEIGHTS = {
     "flirty": (3, 9, "Sent an inappropriate message to a teen"),
     "contact": (3, 6, "Sent contact info to a teen"),
     "teen_report": (3, 6, "Reported by a teen"),
     "probe": (2, 3, "Asked a teen their age, school or where they live"),
     "private": (2, 3, "Asked a teen to move to DMs, another app or a call"),
+    "gift": (2, 4, "Offered a teen Robux or money in return for something"),
 }
 
 
@@ -159,9 +199,11 @@ def has_nude_ask(text: str) -> bool:
     return bool(ask) and any(ask.search(v) for v in variants(text))
 
 
-# "probe" (age, school, where they live) or "private" (dms, other apps, calls). warning signs only
+# "probe" (age, school, where they live), "private" (dms, other apps, calls) or "gift" (robux or money for
+# something). warning signs only
 def soft_sign(text: str) -> str | None:
-    for kind, rx in (("probe", getattr(wordlists, "PROBE", None)), ("private", getattr(wordlists, "PRIVATE", None))):
+    for kind, rx in (("probe", getattr(wordlists, "PROBE", None)), ("private", getattr(wordlists, "PRIVATE", None)),
+                     ("gift", GIFT)):
         if rx and any(rx.search(v) for v in variants(text)):
             return kind
     return None
@@ -238,13 +280,49 @@ def _said(text: str) -> str:
     return f"`{flat.replace('`', chr(39))[:300]}`"
 
 
+# their own words, without code and quotes of someone else
+def _own_words(text: str) -> str:
+    text = re.sub(r"```.*?```|`[^`]*`", " ", text or "", flags=re.S).replace("’", "'")
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))
+
+
 # 13 to 40, younger or older is almost always a joke ("im 12 and what is this", "im 69 lol")
 def stated_age(text: str) -> int | None:
-    text = re.sub(r"```.*?```|`[^`]*`", " ", text or "", flags=re.S).replace("’", "'")
-    text = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(">"))  # quoting someone
-    m = SAYS_AGE.search(text)
+    m = SAYS_AGE.search(_own_words(text))
     age = int(next(g for g in m.groups() if g)) if m else 0
     return age if 13 <= age <= 40 else None
+
+
+# (age, source) from an age, a school year or a birth year. a school year gives the usual age for it, at least 13.
+# 10 to 12 counts here too, roblox servers are full of kids that age. just not the "im 12 and what is this" joke
+def told_age(text: str) -> tuple[int, str] | None:
+    age = stated_age(text)
+    if age:
+        return age, "said"
+    text = _own_words(text)
+    m = SAYS_AGE.search(text)
+    age = int(next(g for g in m.groups() if g)) if m else 0
+    if 10 <= age <= 12 and not re.search(r"\bwhat is this\b", text, re.I):
+        return age, "said"
+    m = SAYS_GRADE.search(text)
+    if m:
+        grade, year = m.group(1) or m.group(2), m.group(3)
+        return max(13, min(17, int(grade) + 5 if grade else int(year) + 4)), "school"
+    m = SAYS_SCHOOL.search(text)
+    if m:
+        return SCHOOL_AGES[" ".join((m.group(1) or m.group(2)).lower().split())], "school"
+    m = SAYS_BORN.search(text)
+    age = time.localtime().tm_year - int(m.group(1)) if m else 0
+    return (age, "born") if 13 <= age <= 40 else None
+
+
+# the age a display name gives away, None if it doesn't
+def name_age(name: str) -> int | None:
+    m = NAME_AGE.search(name or "")
+    if m:
+        return int(m.group(1))
+    m = birth_year_in_name().search(name or "")  # their birthday might not have come yet this year
+    return max(13, time.localtime().tm_year - 2001 - int(m.group()[-2:])) if m else None
 
 
 _hidden = ui_kit.hidden
@@ -262,6 +340,9 @@ class TeenSafety(commands.Cog):
         self._tasks: set[asyncio.Task] = set()
         self._adults: dict[int, set[int]] = {}  # pressed the 18+ button, per server
         self._aged: set[tuple[int, int]] = set()  # account age checked since restart
+        self._ages: dict[int, dict[int, tuple]] = {}  # auto-detect: ages members said, per server
+        self._multi: set[int] | None = None  # warning signs in 2+ servers lately, see _fishing_check
+        self._shared: tuple[float, set[int]] = (0, set())  # servers the network counts, and when that was worked out
         self.leave_check.start()
 
     def cog_unload(self):
@@ -272,6 +353,33 @@ class TeenSafety(commands.Cog):
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    # a warning sign. someone with signs in 2 servers gets looked up on the lookout network when they talk
+    def _signal(self, guild_id: int, user_id: int, kind: str, other_id: int | None = None, detail: str = "") -> None:
+        db.add_signal(guild_id, user_id, kind, other_id, detail)
+        multi = self._multi_members()
+        if user_id not in multi and len({g for g, _, _ in db.network_signals(user_id)}) >= 2:
+            multi.add(user_id)
+
+    def _multi_members(self) -> set[int]:
+        if self._multi is None:
+            self._multi = db.multi_server_members()
+        return self._multi
+
+    # servers the lookout network counts: network on, at least 50 members, and lookout there for 2 weeks,
+    # so a server made yesterday can't put anyone on it
+    @staticmethod
+    def _can_share(guild: discord.Guild) -> bool:
+        me = guild.me
+        return ((guild.member_count or 0) >= NETWORK_MEMBERS and me is not None and me.joined_at is not None
+                and (discord.utils.utcnow() - me.joined_at).days >= NETWORK_JOINED_DAYS)
+
+    def _sharing(self) -> set[int]:
+        at, shared = self._shared
+        if time.time() - at > 600:
+            shared = {g.id for g in self.bot.guilds if self._can_share(g) and db.get_settings(g.id).network}
+            self._shared = (time.time(), shared)
+        return shared
+
     # roles
 
     def verified(self, guild_id: int) -> set[int]:
@@ -279,19 +387,61 @@ class TeenSafety(commands.Cog):
             self._adults[guild_id] = db.verified_adults(guild_id)
         return self._adults[guild_id]
 
-    # TEEN or ADULT. the 18+ button beats roles, discord checked their age.
-    # no age role counts as TEEN with teen by default, otherwise ADULT unless the server ignores those
-    def band(self, member: discord.Member, s: db.GuildSettings, explicit: bool = False) -> int | None:
-        if member.id in self.verified(s.guild_id):
-            return ADULT
+    def ages(self, guild_id: int) -> dict[int, tuple]:
+        if guild_id not in self._ages:
+            self._ages[guild_id] = db.seen_ages(guild_id)
+        return self._ages[guild_id]
+
+    # how old they are now from what they said (it moves with time), or from their name. None if there's no telling
+    def seen_age(self, member, s: db.GuildSettings) -> int | None:
+        seen = self.ages(s.guild_id).get(member.id)
+        if seen and time.time() - seen[3] < db.AGE_DAYS * 86400:
+            return seen[0] + int((time.time() - seen[3]) / (365.25 * 86400))
+        return name_age(getattr(member, "display_name", ""))
+
+    @staticmethod
+    def _role_band(member, s: db.GuildSettings) -> int | None:
         ids = {r.id for r in getattr(member, "roles", [])}
         if ids & (s.role_ids("young_roles") | s.role_ids("older_roles")):
             return TEEN
-        if ids & s.role_ids("adult_roles"):
+        return ADULT if ids & s.role_ids("adult_roles") else None
+
+    # TEEN or ADULT. the 18+ button beats roles, discord checked their age.
+    # no age role counts as TEEN with teen by default. with auto-detect it's what they said or their name shows.
+    # otherwise ADULT unless the server ignores those
+    def band(self, member: discord.Member, s: db.GuildSettings, explicit: bool = False) -> int | None:
+        if member.id in self.verified(s.guild_id):
             return ADULT
+        role = self._role_band(member, s)
+        if role:
+            return role
         if s.teen_default:
             return TEEN
+        age = self.seen_age(member, s) if s.auto_ages else None
+        if age is not None:
+            return TEEN if age < 18 else ADULT
         return None if explicit or s.no_age_role == "ignore" else ADULT
+
+    # warning signs (asking a teen's age, to DM, robux for something) are normal between kids. with auto-detect most
+    # members' ages aren't known, and in a roblox server those are mostly kids, so the signs only count from someone
+    # known to be an adult: an adult role, the 18+ button, an adult age they said, or caught posing as a teen
+    def _sure_adult(self, member, s: db.GuildSettings) -> bool:
+        if not s.auto_ages or member.id in self.verified(s.guild_id) or self._role_band(member, s) == ADULT:
+            return True
+        age = self.seen_age(member, s)
+        return (age is not None and age >= 18) or db.fake_teen(s.guild_id, member.id) is not None
+
+    # "(under 18)" on alerts. with auto-detect it says how lookout knows, since there's no role to show it
+    def _under_18(self, member, s: db.GuildSettings) -> str:
+        if not s.auto_ages or self._role_band(member, s):
+            return "(under 18)"
+        place = (self.ages(s.guild_id).get(member.id) or (0, "", None))[2]
+        ch, _, mid = (place or "").partition(":")
+        if mid:
+            return f"(under 18, [said so](https://discord.com/channels/{s.guild_id}/{ch}/{mid}))"
+        if member.id not in self.ages(s.guild_id) and name_age(member.display_name):
+            return "(under 18, their name says so)"
+        return "(under 18)"
 
     def exempt(self, member) -> bool:
         return (member.bot or member.id == member.guild.owner_id
@@ -329,14 +479,20 @@ class TeenSafety(commands.Cog):
             return
         if s.network and db.has_network_catches(author.id):
             self._background(self._network_check(message, author, s))
+        if s.network and author.id in self._multi_members():
+            self._background(self._fishing_check(message, author, s))
         if not s.teen_safety:
             return
-        self._background(self._look(author, s))
-        mine = self.band(author, s)
         text = message.content or ""
-        age = stated_age(text) if s.age_check else None
-        if age:
-            self._background(self._check_age(message, author, age, s))
+        told = told_age(text) if s.auto_ages or s.age_check or s.nick_check else None
+        if told and s.auto_ages:
+            self._learn_age(message, author, *told, s)
+        mine = self.band(author, s)
+        if told and told[0] < 18 and mine == TEEN:
+            self._age_shared(message, author, s)  # before _look, so the safety tips come in the same DM
+        self._background(self._look(author, s))
+        if told and told[1] == "said" and s.age_check:
+            self._background(self._check_age(message, author, told[0], s))
 
         # sextortion usually comes from someone pretending to be a teen, so this one isn't only for adults
         if mine != ADULT and s.flirty_filter and has_threat(text):
@@ -353,7 +509,7 @@ class TeenSafety(commands.Cog):
             if s.contact_filter and has_contact(text, own=True):
                 if await self._remove(message, f"Your message in {message.channel.mention} had contact info in it, so "
                                                "Lookout removed it. Everyone in the server can see your messages, so "
-                                               "it's safer to keep it private.", mistake=False):
+                                               "it's safer to keep it private.", "own_contact", mistake=False):
                     db.bump("contact")
             return
         if mine != ADULT:
@@ -361,7 +517,7 @@ class TeenSafety(commands.Cog):
         kind, read_as, lang = check_text(text, s.languages) if s.flirty_filter else (None, None, None)
         contact = s.contact_filter and has_contact(text)
         restricted = db.restricted(message.guild.id, author.id)
-        soft = None if kind or contact or restricted else soft_sign(text)
+        soft = None if kind or contact or restricted or not self._sure_adult(author, s) else soft_sign(text)
         if not (kind or contact or restricted or soft):
             return  # nothing to do
         teens = await self._teens_reached(message, s)
@@ -375,16 +531,17 @@ class TeenSafety(commands.Cog):
         where = message.channel.mention
         if soft:  # nothing gets removed, it only adds to Warning Signs. once a day per teen
             if self._once(("soft", guild.id, author.id, teens[0].id, soft), 86400):
-                db.add_signal(guild.id, author.id, soft, teens[0].id, f"{message.channel.id}:{message.id}")
+                self._signal(guild.id, author.id, soft, teens[0].id, f"{message.channel.id}:{message.id}")
                 await self._check_risk(guild, author, s)
             return
         if kind:
             if contact:
-                db.add_signal(guild.id, author.id, "contact", teens[0].id)
+                self._signal(guild.id, author.id, "contact", teens[0].id)
             db.log(guild.id, author.id, "teen_flirty", text[:200], message.channel.id, message_id=message.id)
             removed = await self._remove(message, f"Your {'reply' if message.reference else 'message'} to a member "
                                                   f"under 18 in {where} was removed. Inappropriate messages to teens "
-                                                  "aren't allowed here, and the mods have been told.")
+                                                  "aren't allowed here, and the mods have been told.",
+                                         "threat" if has_threat(text) else "inappropriate", teens[0].id)
             threat = has_threat(text)
             await self._flirty_alert(message, author, teens[0], kind, read_as, removed, s, lang, threat)
             if removed:  # only DM the teen if it actually got deleted
@@ -397,13 +554,14 @@ class TeenSafety(commands.Cog):
                     await self._heads_up(message, author, teen, threat)
         elif restricted and not nearby:
             await self._remove(message, f"Your message in {where} was removed. You can't reply to or mention "
-                                        "members under 18 here until the mods review a report about you.")
+                                        "members under 18 here until the mods review a report about you.",
+                               "restricted", teens[0].id)
             return
         else:
-            db.add_signal(guild.id, author.id, "contact", teens[0].id)
+            self._signal(guild.id, author.id, "contact", teens[0].id)
             db.log(guild.id, author.id, "teen_contact", text[:200], message.channel.id, message_id=message.id)
             if await self._remove(message, f"Your message in {where} was removed. This server doesn't allow sending "
-                                           "contact info to members under 18."):
+                                           "contact info to members under 18.", "contact", teens[0].id):
                 db.bump("contact")
                 for teen in teens:
                     await self._heads_up(message, author, teen, contact=True)
@@ -461,7 +619,12 @@ class TeenSafety(commands.Cog):
                 return [member]
         return []
 
-    async def _remove(self, message: discord.Message, why: str, mistake: bool = True) -> bool:
+    # find: what it is in a safety scan report, teen: who it was sent to
+    async def _remove(self, message: discord.Message, why: str, find: str, teen: int | None = None,
+                      mistake: bool = True) -> bool:
+        if db.get_settings(message.guild.id).scanning:  # only watching: saved for the report, left where it is
+            db.add_scan_find(message.guild.id, find, message.author.id, teen, message.jump_url)
+            return False
         try:
             await message.delete()
         except discord.HTTPException:
@@ -486,7 +649,7 @@ class TeenSafety(commands.Cog):
             alert_id, _, first, count = recent
             case = db.case_by_message(alert_id)
             if case and case["status"] == "open":
-                db.add_signal(guild.id, adult.id, "flirty", teen.id, f"{first}:{message.id}")
+                self._signal(guild.id, adult.id, "flirty", teen.id, f"{first}:{message.id}")
                 self._flirty_cases[key] = (alert_id, now, first, count + 1)
                 if count < MAX_CASE_NOTES:
                     await self._note_on_case(guild, case, f"**Another one** to <@{teen.id}> in {message.channel.mention}"
@@ -495,22 +658,25 @@ class TeenSafety(commands.Cog):
                     await self._note_on_case(guild, case, "-# More messages were removed after this. Each one is in "
                                                           "their /history.")
                 return
-        db.add_signal(guild.id, adult.id, "flirty", teen.id, str(message.id))
+        self._signal(guild.id, adult.id, "flirty", teen.id, str(message.id))
         done = ("Lookout removed it from chat. This copy stays here for the mods." if removed else
+                f"**Not removed,** Lookout is only running a Safety Scan here. [Jump to It]({message.jump_url})"
+                if s.scanning else
                 f"**Lookout couldn't remove it.** Give Lookout **Manage Messages**. [Jump to It]({message.jump_url})")
         if read_as:
             done = f"**Spelled to get past filters.** Lookout read it as {_hidden(read_as, 300)}\n-# " + done
         buttons = action_buttons(guild.id, message.channel.id, adult.id)
         buttons.insert(2, self._btn("False Alarm", "falsealarm", adult.id, message.id))
+        under = self._under_18(teen, s)
         if threat:
             title, what = ("Threat to Share Pictures",
-                           f"Threatened to share pictures of <@{teen.id}> (under 18). This is how sextortion starts.")
+                           f"Threatened to share pictures of <@{teen.id}> {under}. This is how sextortion starts.")
         elif sexual:  # sent by a teen or someone without an age role
             title, what = ("Inappropriate Request to a Teen",
-                           f"Asked <@{teen.id}> (under 18) for pictures or something inappropriate. Discord doesn't "
+                           f"Asked <@{teen.id}> {under} for pictures or something inappropriate. Discord doesn't "
                            "allow this even between two teens.")
         else:
-            title, what = "Inappropriate Message", f"Sent an inappropriate message to <@{teen.id}> (under 18)."
+            title, what = "Inappropriate Message", f"Sent an inappropriate message to <@{teen.id}> {under}."
         alert_id = await self._case(
             guild, s, adult.id, "teen", title, [
                 ("member", "Who", ui_kit.member_line(adult)),
@@ -587,7 +753,7 @@ class TeenSafety(commands.Cog):
         why = ("Threatening to share someone's pictures isn't allowed here" if threat else
                "Asking anyone under 18 for inappropriate pictures or chats isn't allowed, even between teens")
         removed = await self._remove(message, f"Your message in {message.channel.mention} was removed. {why}, and the "
-                                              "mods have been told.")
+                                              "mods have been told.", "threat" if threat else "pics", teens[0].id)
         await self._flirty_alert(message, author, teens[0], "severe", None, removed, s, threat=threat,
                                  sexual=not threat)
         if removed:
@@ -609,11 +775,12 @@ class TeenSafety(commands.Cog):
         now = discord.utils.utcnow()
         new = (not reporter.joined_at or (now - reporter.joined_at).days < REPORTER_DAYS
                or (now - reporter.created_at).days < NEW_ACCOUNT_DAYS)
-        db.add_signal(guild.id, target.id, "teen_report", reporter.id, "new" if new else "")
+        self._signal(guild.id, target.id, "teen_report", reporter.id, "new" if new else "")
         if (s.teen_restrict and not db.restricted(guild.id, target.id)
                 and len(db.teen_reporters(guild.id, target.id, settled_only=True)) >= 2):
-            db.set_restricted(guild.id, target.id, True)
-            db.log(guild.id, target.id, "teen_restricted", "Reported by 2 different teens")
+            if not s.scanning:  # a scan only notes that it would have
+                db.set_restricted(guild.id, target.id, True)
+                db.log(guild.id, target.id, "teen_restricted", "Reported by 2 different teens")
             await self._case(guild, s, target.id, "teen", "Kept Away From Teens", [
                 ("member", "Who", ui_kit.member_line(target)),
                 ("report", "What Happened", f"<@{target.id}> was reported by **2 different teens** in the last 30 "
@@ -641,7 +808,8 @@ class TeenSafety(commands.Cog):
         if test:
             return  # test mode: only shows up in /setup
         # those messages stay up, so the mods can read them where they were said
-        said = {"probe": "Asked a teen's age, school or where they live", "private": "Asked a teen to talk in private"}
+        said = {"probe": "Asked a teen's age, school or where they live", "private": "Asked a teen to talk in private",
+                "gift": "Offered a teen Robux or money for something"}
         links = [f"- {said[sig['kind']]} · <#{ch}> · [Jump to It](https://discord.com/channels/{guild.id}/{ch}/{mid})"
                  for sig in db.signals(guild.id, member.id) if sig["kind"] in said
                  for ch, _, mid in [(sig["detail"] or "").partition(":")] if ch.isdigit() and mid.isdigit()]
@@ -654,6 +822,10 @@ class TeenSafety(commands.Cog):
 
     async def _case(self, guild, s, target_id: int, kind: str, title: str, parts, footer, buttons, urgent=False,
                     thumbnail=None, evidence=None, status=None, ping=None, summary=None, report=True) -> int | None:
+        if s.scanning and title in SCAN_FINDS:  # saved for the scan report, the mods aren't told yet
+            if SCAN_FINDS[title]:
+                db.add_scan_find(guild.id, SCAN_FINDS[title], target_id, None, evidence)
+            return None
         case_no = db.next_case_no(guild.id)
         if report:
             buttons = list(buttons)
@@ -683,23 +855,24 @@ class TeenSafety(commands.Cog):
                 db.forget_leaver(member.guild.id, member.id)     # back on the same account
                 if s.alt_catcher:
                     await self._check_alt(member, s)
-                if s.tips_dm and self.is_teen(member, s) and db.first_nudge(member.guild.id, member.id):
+                # a safety scan doesn't message anyone
+                if s.tips_dm and not s.scanning and self.is_teen(member, s) and db.first_nudge(member.guild.id, member.id):
                     await self._tips_dm(member, s)
-            if s.nick_check and self.is_teen(member, s) and self._nicks.get(key) != member.display_name:
+            if (s.nick_check and not s.scanning and self.is_teen(member, s)
+                    and self._nicks.get(key) != member.display_name):
                 self._nicks[key] = member.display_name
                 await self._check_nick(member)
         except Exception:
             log.warning("Couldn't finish the checks for %s", member.id, exc_info=True)
 
-    async def _tips_dm(self, member: discord.Member, s: db.GuildSettings) -> None:
-        name = discord.utils.escape_markdown(member.guild.name)
+    # the safety tips as (sections, buttons), the "you shared your age" DM carries them too
+    @staticmethod
+    def _tips_parts() -> tuple[list, list]:
         buttons = [discord.ui.Button(label="Safety Center", style=discord.ButtonStyle.link, url=ui_kit.SAFETY_CENTER_URL)]
         add_app = ui_kit.add_app_button()
         if add_app:
             buttons.append(add_app)
-        view = ui_kit.card(
-            ui_kit.titled(ui_kit.mascot("wave", "brand"), "Before You Start Chatting"),
-            f"You have a teen role in **{name}**, so here are a few things that help you stay safe there.",
+        return [
             ("Control Who Can DM You", "Click the server's name, open **Privacy Settings** and turn off **Direct "
                                        "Messages**. People can still talk to you in the server, where the mods can "
                                        "see it.\n-# DMs from people who aren't your friends go to **Message Requests** "
@@ -712,6 +885,16 @@ class TeenSafety(commands.Cog):
                                        + ("\n-# Not sure about a DM? Add Lookout to your apps, then right-click it > "
                                           "**Apps** > **Is this safe?** or **Report Message to Mods**." if add_app
                                           else "")),
+        ], buttons
+
+    async def _tips_dm(self, member: discord.Member, s: db.GuildSettings) -> None:
+        name = discord.utils.escape_markdown(member.guild.name)
+        sections, buttons = self._tips_parts()
+        why = (f"You have a teen role in **{name}**" if self._role_band(member, s) == TEEN
+               else f"Lookout looks out for teens in **{name}**")
+        view = ui_kit.card(
+            ui_kit.titled(ui_kit.mascot("wave", "brand"), "Before You Start Chatting"),
+            f"{why}, so here are a few things that help you stay safe there.", *sections,
             subtitle=f"From {name}", footer="You'll only get this message once.", buttons=buttons)
         try:
             await member.send(view=view, allowed_mentions=discord.AllowedMentions.none())
@@ -827,17 +1010,22 @@ class TeenSafety(commands.Cog):
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild):
         self._adults.pop(guild.id, None)  # the db rows go in forget_guild
+        self._ages.pop(guild.id, None)
 
     # not really a teen. an adult who picks a teen role, or just never takes the 18+ one with teen by default,
     # would skip every adult check. lookout can't change roles, so it checks their messages to teens like an adult's
 
-    # the oldest age their teen role allows, 17 if the name doesn't say. None without a teen role
-    @staticmethod
-    def _claimed_oldest(member: discord.Member, s: db.GuildSettings) -> int | None:
+    # the oldest age their teen role allows, 17 if the name doesn't say. with auto-detect, the age they said
+    # (a school year can be a year off). None without either
+    def _claimed_oldest(self, member: discord.Member, s: db.GuildSettings) -> int | None:
         teen = s.role_ids("young_roles") | s.role_ids("older_roles")
         roles = [r for r in member.roles if r.id in teen]
         if not roles:
-            return None
+            age = self.seen_age(member, s) if s.auto_ages and not self._role_band(member, s) else None
+            if age is None or age >= 18:
+                return None
+            # kids under 13 often signed up younger than they should have, so the account check starts at 13
+            return max(13, age + (self.ages(s.guild_id).get(member.id, (0, ""))[1] == "school"))
         ages = [int(n) for r in roles for n in re.findall(r"\d+", r.name) if 10 <= int(n) <= 17]
         return max(ages) if ages else 17
 
@@ -854,11 +1042,14 @@ class TeenSafety(commands.Cog):
         if key in self._aged:
             return False
         self._aged.add(key)
-        reason = self._too_old(member, s)
-        if not reason or not db.flag_fake_teen(s.guild_id, member.id, reason):  # not too old, or a mod cleared them
+        # lookout network: an adult age they gave in another server. the 18+ button there counts too
+        elsewhere = db.adult_elsewhere(member.id, s.guild_id, self._sharing()) if s.network else None
+        reasons = [r for r in (f"elsewhere:{elsewhere}" if elsewhere else None, self._too_old(member, s)) if r]
+        if not reasons or not db.flag_fake_teen(s.guild_id, member.id, reasons[0]):  # or a mod cleared them
             return False
-        if self._claimed_oldest(member, s):  # a teen role is worth a look. teen by default, it's just an unverified adult
-            self._background(self._fake_teen_case(member, s, [reason]))
+        # a teen role or a teen age they said is worth a look. teen by default, it's just an unverified adult
+        if self._claimed_oldest(member, s):
+            self._background(self._fake_teen_case(member, s, reasons))
         return True
 
     @staticmethod
@@ -867,6 +1058,9 @@ class TeenSafety(commands.Cog):
         if kind == "age":
             where = f" in {message.channel.mention} · [Jump to Message]({message.jump_url})" if message else ""
             return f"- Said they're {rest}{where}"
+        if kind == "elsewhere":
+            return (f"- Said they're {rest} in another server that uses Lookout" if rest != "18" else
+                    "- Said they're 18 or older in another server that uses Lookout")
         if kind == "account":
             years, oldest = (int(x) for x in rest.split(":"))
             return (f"- Their account is {years} years old. If they're {oldest} or younger, they made it at "
@@ -881,7 +1075,7 @@ class TeenSafety(commands.Cog):
         teen = s.role_ids("young_roles") | s.role_ids("older_roles")
         role = next((r for r in member.roles if r.id in teen), None)
         who = ui_kit.member_line(member).split("\n", 1)
-        who[0] += f" · has {role.mention}" if role else ""
+        who[0] += f" · has {role.mention}" if role else f" · {self._under_18(member, s)[1:-1]}" if s.auto_ages else ""
         buttons = action_buttons(guild.id, message.channel.id if message else None, member.id)
         buttons.insert(0, self._btn("They're a Teen", "realteen", member.id))
         await self._case(guild, s, member.id, "age", "Not Really a Teen?", [
@@ -893,12 +1087,92 @@ class TeenSafety(commands.Cog):
             thumbnail=member.display_avatar.url, evidence=message.jump_url if message else None,
             summary="Has a teen role but probably isn't a teen")
 
+    # auto-detect. members without an age role who say their age get counted as it. saying an adult age sticks:
+    # an adult who later says they're 15 stays an adult, and the mods hear about it
+    def _learn_age(self, message: discord.Message, member: discord.Member, age: int, source: str, s) -> None:
+        if member.id in self.verified(s.guild_id) or self._role_band(member, s):
+            return  # their role or the 18+ button already says
+        ages = self.ages(s.guild_id)
+        old, before = ages.get(member.id), self.seen_age(member, s)
+        if old and old[1] == "mod":
+            return  # a mod already decided
+        if age < 18 and old and before is not None and before >= 18:
+            if s.age_check:
+                self._background(self._two_ages(message, member, old, age, s))
+            return
+        place = f"{message.channel.id}:{message.id}"
+        ages[member.id] = (age, source, place, db.save_seen_age(s.guild_id, member.id, age, source, place))
+        if age < 18 and (before is None or before >= 18):
+            db.bump("teens_spotted")
+            if message.reference:
+                self._background(self._asked_age(message, member, s))
+
+    # they said their age in a reply to someone asking it. that's a warning sign for whoever asked
+    async def _asked_age(self, message: discord.Message, teen: discord.Member, s) -> None:
+        ref = message.reference.resolved if message.reference else None
+        if not isinstance(ref, discord.Message) or ref.author.bot or ref.author.id == teen.id:
+            return
+        if soft_sign(ref.content or "") != "probe":
+            return
+        guild = message.guild
+        asker = await self._fetch(guild, ref.author.id)
+        if asker is None or self.exempt(asker) or self.band(asker, s) != ADULT or not self._sure_adult(asker, s):
+            return
+        if self._once(("soft", guild.id, asker.id, teen.id, "probe"), 86400):
+            self._signal(guild.id, asker.id, "probe", teen.id, f"{ref.channel.id}:{ref.id}")
+            await self._check_risk(guild, asker, s)
+
+    async def _two_ages(self, message: discord.Message, member: discord.Member, old: tuple, age: int, s) -> None:
+        guild = message.guild
+        if not self._once(("twoages", guild.id, member.id), 86400) or db.has_case(guild.id, member.id, "age"):
+            return
+        old_age, _, place, said_at = old
+        ch, _, mid = (place or "").partition(":")
+        before = f"- Said they're **{old_age}** <t:{int(said_at)}:R>" + (
+            f" in <#{ch}> · [Jump to It](https://discord.com/channels/{guild.id}/{ch}/{mid})" if mid else "")
+        buttons = action_buttons(guild.id, message.channel.id, member.id)
+        buttons.insert(0, self._btn("They're a Teen", "realteen", member.id, age))
+        await self._case(guild, s, member.id, "age", "Said Two Different Ages", [
+            ("member", "Who", ui_kit.member_line(member)),
+            ("report", "What They Said", f"{before}\n- Now says they're **{age}** in {message.channel.mention} · "
+                                         f"[Jump to It]({message.jump_url})"),
+            ("warning", "Why It Matters", "Adults sometimes say they're younger to get close to teens. Lookout keeps "
+                                          "checking their messages to teens like an adult's."),
+        ], footer="If they really are a teen, press They're a Teen.", buttons=buttons,
+            thumbnail=member.display_avatar.url, evidence=message.jump_url,
+            summary=f"Said they're {old_age}, then said they're {age}")
+
+    # a teen said their age in chat. one DM per server, with a button to remove that message
+    def _age_shared(self, message: discord.Message, member: discord.Member, s) -> None:
+        if not s.nick_check or s.scanning or not db.age_tip_once(s.guild_id, member.id):
+            return
+        tips = s.tips_dm and db.first_nudge(s.guild_id, member.id)  # one DM with both, not two
+        self._background(self._age_tip(message, member, s, tips))
+
+    async def _age_tip(self, message: discord.Message, member: discord.Member, s, tips: bool) -> None:
+        guild = message.guild
+        name = discord.utils.escape_markdown(guild.name)
+        can_remove = message.channel.permissions_for(guild.me).manage_messages
+        buttons = [self._btn("Remove It", "agedel", guild.id, message.channel.id, message.id, member.id),
+                   self._btn("Keep It", "agekeep", guild.id, member.id)] if can_remove else []
+        sections, more = self._tips_parts() if tips else ([], [])
+        view = ui_kit.card(
+            ui_kit.titled(ui_kit.mascot("watching", "warning"), "You Shared Your Age"),
+            f"You said your age in {message.channel.mention}. Everyone in **{name}** can see it, and search for it.",
+            ("Good to Know", "Some people search servers for messages like that to find teens. It's safer to keep "
+                             "your age between you and people you trust."
+             + (" Lookout can remove it for you." if can_remove else
+                " You can delete it: hover over the message and press the trash icon.")),
+            *sections, subtitle=f"From {name}", footer="You'll only get this message once.", buttons=buttons + more)
+        try:
+            await member.send(view=view, allowed_mentions=discord.AllowedMentions.none())
+        except discord.HTTPException:
+            pass    # DMs closed
+
     # age mismatch, once per member
     async def _check_age(self, message: discord.Message, member: discord.Member, age: int, s) -> None:
         guild = message.guild
-        ids = {r.id for r in member.roles}
-        band = (TEEN if ids & (s.role_ids("young_roles") | s.role_ids("older_roles"))
-                else ADULT if ids & s.role_ids("adult_roles") else None)
+        band = self._role_band(member, s)
         if age >= 18 and band != ADULT and self.band(member, s) == TEEN:
             if not db.flag_fake_teen(guild.id, member.id, f"age:{age}"):
                 return
@@ -977,12 +1251,52 @@ class TeenSafety(commands.Cog):
     # and only from servers that have had lookout a while, so a server made yesterday can't put anyone on it
 
     def _share(self, message: discord.Message, adult: discord.Member, teen: discord.Member, s) -> None:
-        guild, me = message.guild, message.guild.me
-        if not s.network or (guild.member_count or 0) < NETWORK_MEMBERS or not me or not me.joined_at:
+        if s.network and self._can_share(message.guild):
+            db.add_network_catch(message.guild.id, adult.id, teen.id, message.id, message.content)
+
+    # going after teens in several servers. each server only sees one "how old are you" or "add me on roblox",
+    # lookout sees the same account doing it everywhere. warning signs only count from servers that share
+    async def _fishing_check(self, message: discord.Message, member: discord.Member, s) -> None:
+        guild, shared = member.guild, self._sharing()
+        rows = [(g, kind, teen) for g, kind, teen in db.network_signals(member.id, skip_guild=guild.id) if g in shared]
+        servers, teens = {g for g, _, _ in rows}, {t for _, _, t in rows}
+        serious = {kind for _, kind, _ in rows} - {"probe"}
+        if len(servers) < FISHING_SERVERS or len(teens) < FISHING_TEENS or not (serious or len(teens) >= 5):
+            if len({g for g, _, _ in db.network_signals(member.id)}) < 2:
+                self._multi_members().discard(member.id)  # old signs ran out
             return
-        if (discord.utils.utcnow() - me.joined_at).days < NETWORK_JOINED_DAYS:
+        if db.network_record(member.id, skip_guild=guild.id)["listed"]:
+            return  # Caught in Other Servers already covers them
+        if not db.fishing_alert_once(guild.id, member.id):
             return
-        db.add_network_catch(guild.id, adult.id, teen.id, message.id, message.content)
+        teen_here = s.teen_safety and self.band(member, s) == TEEN
+        if teen_here:  # counted as a teen here, so check them like an adult
+            db.flag_fake_teen(guild.id, member.id, "network")
+        lines = [f"- {label} · {n} teen{'' if n == 1 else 's'}" for kind, label in FISHING_LABELS.items()
+                 if (n := len({t for _, k, t in rows if k == kind}))]
+        here = len({sig["other_id"] for sig in db.signals(guild.id, member.id) if sig["kind"] in db.FISHING_KINDS})
+        buttons = action_buttons(guild.id, message.channel.id, member.id)
+        ui_kit.add_action(buttons, "Keep Away From Teens", "Their replies and mentions to teens get removed",
+                          f"{PREFIX}:netkeep:{member.id}")
+        await self._case(guild, s, member.id, "teen", "Going After Teens in Other Servers", [
+            ("member", "Who", ui_kit.member_line(member)),
+            ("warning", "What Lookout Saw",
+             f"In the last 2 weeks, in **{len(servers)} other servers** that use Lookout, this account went after "
+             f"**{len(teens)} different teens**:\n" + "\n".join(lines)
+             + ("\n**Lookout counted them as a teen here,** so it now checks their messages to teens like an adult's."
+                if teen_here else "")
+             + "\n-# One of these alone looks normal. The same account doing it in server after server doesn't. "
+               "Lookout doesn't say which servers, who the teens were, or what was said."),
+            ("cases", "Here", (f"Already showed warning signs toward {here} teen{'' if here == 1 else 's'} here. "
+                               if here else "Nothing here yet. ")
+             + f"They just sent a message in {message.channel.mention}. [Jump to It]({message.jump_url})"),
+        ], footer="A heads-up from the Lookout Network, not proof. Watch how they act around teens here, and keep it "
+                  "inside the mod team.",
+            buttons=buttons, urgent=bool(serious & {"contact", "flirty", "teen_report", "gift"}),
+            thumbnail=member.display_avatar.url, evidence=message.jump_url,
+            summary=f"Went after {len(teens)} teens in {len(servers)} other servers")
+        if not s.scanning:  # a scan only saves it for the report
+            db.bump("fishing_alerts")
 
     async def _network_check(self, message: discord.Message, member: discord.Member, s) -> None:
         guild = member.guild
@@ -1001,8 +1315,8 @@ class TeenSafety(commands.Cog):
             ("warning", "What Happened Before",
              f"In **{record['servers']} other servers** that use Lookout, its filter removed **{n} inappropriate "
              f"message{'' if n == 1 else 's'}** this account sent to **{record['teens']} different teens**. The last "
-             f"one was <t:{last}:R>." + ("\n**They have a teen role here,** so Lookout now checks their messages to "
-                                         "teens like an adult's." if teen_here else "")
+             f"one was <t:{last}:R>." + ("\n**Lookout counted them as a teen here,** so it now checks their messages "
+                                         "to teens like an adult's." if teen_here else "")
              + "\n-# Lookout doesn't say which servers, who the teens were, or what the messages said."),
             ("cases", "Why Now", f"They just sent a message in {message.channel.mention}. "
                                  f"[Jump to It]({message.jump_url})"),
@@ -1010,7 +1324,8 @@ class TeenSafety(commands.Cog):
                   "Keep it inside the mod team.",
             buttons=buttons, urgent=True, thumbnail=member.display_avatar.url, evidence=message.jump_url,
             summary=f"Caught by Lookout in {record['servers']} other servers")
-        db.bump("network_alerts")
+        if not s.scanning:
+            db.bump("network_alerts")
 
     # report to discord
 
@@ -1072,7 +1387,7 @@ class TeenSafety(commands.Cog):
             return await interaction.response.send_message(
                 view=ui_kit.note("This button doesn't work anymore."),
                 ephemeral=interaction.guild is not None)
-        if action in ("tell", "tellmore", "tellsend", "nick", "nickkeep"):  # DM buttons
+        if action in ("tell", "tellmore", "tellsend", "nick", "nickkeep", "agedel", "agekeep"):  # DM buttons
             return await self._from_dm(interaction, action, ids)
 
         user = interaction.user
@@ -1114,6 +1429,9 @@ class TeenSafety(commands.Cog):
             return await self._stamp(interaction, f"Marked as a false alarm by {user.mention}.", state="False Alarm")
         if action == "realteen":  # "not really a teen?" was wrong. stays cleared, lookout won't flag them again here
             db.clear_fake_teen(guild.id, ids[0])
+            if len(ids) > 1:  # said two different ages: go with the teen one, and stop guessing from chat
+                self.ages(guild.id)[ids[0]] = (ids[1], "mod", None,
+                                               db.save_seen_age(guild.id, ids[0], ids[1], "mod", None))
             db.log(guild.id, ids[0], "teen_cleared", "A mod said they really are a teen", actor_id=user.id)
             if interaction.message:
                 db.resolve_case(interaction.message.id, user.id, "They really are a teen")
@@ -1175,6 +1493,9 @@ class TeenSafety(commands.Cog):
                 await self.reported(guild, teen, adult)
             return
 
+        if action in ("agedel", "agekeep"):  # "you shared your age"
+            return await self._remove_age(interaction, guild, action, ids)
+
         member = await self._fetch(guild, me.id) if ids[1:] == [me.id] else None
         if action == "nickkeep" or member is None:
             return await interaction.response.edit_message(view=ui_kit.note(
@@ -1192,6 +1513,27 @@ class TeenSafety(commands.Cog):
         return await interaction.response.edit_message(view=ui_kit.note(
             f"Your nickname in **{discord.utils.escape_markdown(guild.name)}** is now "
             f"**{discord.utils.escape_markdown(clean[:32])}**."), allowed_mentions=discord.AllowedMentions.none())
+
+    # ids: guild, channel, message, the teen. only the teen who said it can remove it
+    @staticmethod
+    async def _remove_age(interaction: discord.Interaction, guild: discord.Guild, action: str, ids: list[int]):
+        yourself = "You can delete it yourself: hover over the message and press the trash icon."
+        if action == "agekeep" or len(ids) < 4 or ids[3] != interaction.user.id:
+            return await interaction.response.edit_message(view=ui_kit.note(f"Okay, it stays. {yourself}"))
+        channel = guild.get_channel_or_thread(ids[1])
+        try:
+            message = await channel.fetch_message(ids[2])
+            mine = message.author.id == interaction.user.id
+            if mine:
+                await message.delete()
+        except discord.NotFound:
+            return await interaction.response.edit_message(view=ui_kit.note("**It's already gone.**"))
+        except (discord.HTTPException, AttributeError):  # missing permission, or the channel is gone
+            mine = False
+        if not mine:
+            return await interaction.response.edit_message(view=ui_kit.note(f"Lookout couldn't remove it. {yourself}"))
+        await interaction.response.edit_message(view=ui_kit.note(
+            f"**Removed.** Your message in {channel.mention} is gone."))
 
     @staticmethod
     async def _fetch(guild: discord.Guild, user_id: int) -> discord.Member | None:

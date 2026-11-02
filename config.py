@@ -22,6 +22,8 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "")
 # view channels, send messages, manage messages, attach files, read message history,
 # move members, moderate members, manage nicknames
 INVITE_PERMISSIONS = 1099662732288
+# for a safety scan, lookout only watches: View Channels, Send Messages, Attach Files, Read Message History
+SCAN_PERMISSIONS = 101376
 
 NSFW_THRESHOLD = _float("NSFW_THRESHOLD", 0.6)
 MAX_IMAGE_MB = _int("MAX_IMAGE_MB", 10)
