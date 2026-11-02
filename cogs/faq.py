@@ -2,12 +2,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-import chart
 import config
 import ui_kit
 
 PICK = "lkfaq:pick"  # one dropdown per topic: lkfaq:pick:<topic>
-BANNER = "faq-banner.png"
 SOURCE_URL = "https://github.com/kwvn/Lookout"
 SUPPORT_CHANNEL = 1553440549455925319  # in the support server
 
@@ -151,14 +149,8 @@ def _link(bot, kind: str | None) -> discord.ui.Button | None:
 
 def faq_view(bot) -> discord.ui.LayoutView:
     view = discord.ui.LayoutView(timeout=None)
+    ui_kit.head(view, "Frequently Asked Questions", "Lookout Help Center", "help")
     box = discord.ui.Container()
-    data = chart.banner("help", "Frequently Asked Questions", "Lookout Help Center", mascot=False)
-    if data:
-        box.add_item(discord.ui.MediaGallery(discord.MediaGalleryItem(f"attachment://{BANNER}",
-                                                                      description="Frequently Asked Questions")))
-        view.banner = (BANNER, data)
-    else:
-        box.add_item(discord.ui.TextDisplay("# Frequently Asked Questions"))
     box.add_item(discord.ui.TextDisplay("Find answers to the most common questions about Lookout. Choose a topic below. "
                                         "Answers are only visible to you.\n-# Browse by topic"))
     for topic, (name, items) in TOPICS.items():
@@ -221,7 +213,7 @@ class Faq(commands.Cog):
                 "That question isn't in the FAQ anymore. Pick another one."), ephemeral=True)
         await interaction.response.send_message(view=answer_view(self.bot, key), ephemeral=True,
                                                 allowed_mentions=discord.AllowedMentions.none())
-        try:  # reset the dropdowns, so the same question can be picked again. the banner stays attached
+        try:  # reset the dropdowns, so the same question can be picked again
             await interaction.message.edit(view=faq_view(self.bot))
         except discord.HTTPException:
             pass

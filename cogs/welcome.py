@@ -36,7 +36,7 @@ RULE_LIST = [
 ]
 
 
-def welcome_card(bot, banner: bool = True) -> discord.ui.LayoutView:
+def welcome_card(bot) -> discord.ui.LayoutView:
     link = discord.ButtonStyle.link
     return ui_kit.card(
         "Welcome to Lookout",
@@ -55,7 +55,7 @@ def welcome_card(bot, banner: bool = True) -> discord.ui.LayoutView:
                f"mistake? Open a post in <#{SUPPORT}>.",
         buttons=[discord.ui.Button(label="Terms of Service", style=link, url=config.TERMS_URL),
                  discord.ui.Button(label="Privacy Policy", style=link, url=config.PRIVACY_URL)],
-        subtitle="The official support server", icon="brand", banner=banner, looky="wave")
+        subtitle="The official support server", icon="brand", looky="wave")
 
 
 def rules_view() -> discord.ui.LayoutView:  # a box per rule
@@ -73,7 +73,7 @@ def _has_rules_button(message: discord.Message) -> bool:
 
 
 async def post_welcome(interaction: discord.Interaction):
-    await ui_kit.post_card(interaction, lambda perms: welcome_card(interaction.client, banner=perms.attach_files),
+    await ui_kit.post_card(interaction, lambda perms: welcome_card(interaction.client),
                            _has_rules_button, "welcome message", "Run /post-welcome here again anytime to update it.")
 
 

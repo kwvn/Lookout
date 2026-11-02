@@ -42,8 +42,7 @@ def _step(page: int) -> str:
 
 def _card(page: int, name: str, *sections, subtitle: str | None = None, **kwargs):
     sub = f"**{name}** · {_step(page)}" + (f" · {subtitle}" if subtitle else "")
-    sub = ui_kit.titled(ui_kit.mascot(MOODS.get(page, "watching")), sub)
-    return ui_kit.card("Demo", *sections, subtitle=sub, icon="brand", **kwargs)
+    return ui_kit.card("Demo", *sections, subtitle=sub, icon="brand", looky=MOODS.get(page, "watching"), **kwargs)
 
 
 def _picture_item(file: discord.File) -> discord.ui.MediaGallery:
@@ -55,7 +54,7 @@ def _picture_item(file: discord.File) -> discord.ui.MediaGallery:
 START = "lkhelp:demo"  # handled in help.py
 
 
-def demo_card(bot, banner: bool = True) -> discord.ui.LayoutView:
+def demo_card(bot) -> discord.ui.LayoutView:
     start = discord.ui.Button(label="Start the Demo", custom_id=START)
     return ui_kit.card(
         "Try Lookout",
@@ -71,8 +70,7 @@ def demo_card(bot, banner: bool = True) -> discord.ui.LayoutView:
         ("Add It to Your Server", ["Add Lookout, then run /setup. It takes about a minute.",
                                    discord.ui.Button(label="Add Lookout to Your Server", style=discord.ButtonStyle.link,
                                                      url=ui_kit.invite_url(bot))]),
-        subtitle="See everything Lookout does in a few minutes, without adding it to your server.", icon="brand",
-        banner=banner)
+        subtitle="See everything Lookout does in a few minutes, without adding it to your server.", icon="brand")
 
 
 def _has_start_button(message: discord.Message) -> bool:
@@ -84,7 +82,7 @@ def _has_start_button(message: discord.Message) -> bool:
 
 
 async def post_demo(interaction: discord.Interaction):
-    await ui_kit.post_card(interaction, lambda perms: demo_card(interaction.client, banner=perms.attach_files),
+    await ui_kit.post_card(interaction, lambda perms: demo_card(interaction.client),
                            _has_start_button, "card", "Run /post-demo here again anytime to update it.")
 
 

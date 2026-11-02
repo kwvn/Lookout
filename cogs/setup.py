@@ -153,11 +153,10 @@ def _select(field: str, choices: list, current, placeholder: str) -> discord.ui.
         for value, label in choices])
 
 
-# banner with the server and status drawn in, each box is a list of rows, nav buttons under the boxes
+# the server and status under the title, each box is a list of rows, nav buttons under the boxes
 def _card(guild, title: str, status: str, *boxes, nav=(), footer=None):
     view = ui_kit.card(title, *(_list(*box) for box in boxes if box), footer=footer, icon="settings",
-                       subtitle=f"{discord.utils.escape_markdown(guild.name)} · {status}",
-                       line=f"{guild.name} · {status}")
+                       subtitle=f"{discord.utils.escape_markdown(guild.name)} · {status}")
     if nav:
         view.add_item(ui_kit.button_row(*nav))
     return view
@@ -588,7 +587,7 @@ def _step(number: int, label: str, text: str, items: list, note: str | None = No
     if note:
         text += f"\n\n**{note}**"
     step = f"Step {number} of 4"
-    return ui_kit.card("Set Up Lookout", (label, text), subtitle=step, line=step, buttons=items, icon="settings")
+    return ui_kit.card("Set Up Lookout", (label, text), subtitle=step, buttons=items, icon="settings")
 
 
 def step_channel(note: str | None = None):
@@ -640,7 +639,7 @@ def step_ages(s: db.GuildSettings, guild=None, manual: bool = False):
     found = None if (manual or s.teen_safety or guild is None) else _found_box(guild, "gfound")
     if found:
         label, (text, use) = found
-        return ui_kit.card("Set Up Lookout", (label, text), subtitle="Step 3 of 4", line="Step 3 of 4", icon="settings",
+        return ui_kit.card("Set Up Lookout", (label, text), subtitle="Step 3 of 4", icon="settings",
                            buttons=[use, _button("Pick Different Roles", "gmanual")])
 
     def roles(field, placeholder, *also):
@@ -665,7 +664,7 @@ def step_age_mode():
     auto = discord.ui.Section(f"**Auto-Detect** (no age roles needed)\n-# {AUTO_TIP} {AUTO_FOR}",
                               accessory=_button("Use This", "gmode", "auto"))
     return ui_kit.card("Set Up Lookout", ("Age Roles", ["How does your server mark ages?", tbd, roles, auto]),
-                       subtitle="Step 3 of 4", line="Step 3 of 4", icon="settings")
+                       subtitle="Step 3 of 4", icon="settings")
 
 
 def step_adult(s: db.GuildSettings):
@@ -676,7 +675,7 @@ def step_adult(s: db.GuildSettings):
                        ("Your 18+ Role", ["Pick the role only adults have. Everyone without it is protected as a teen.",
                                           menu, f"-# {ADULT_TIP}\n-# Don't want a role at all? Skip this, then post "
                                                 "the invisible 18+ button in **/setup** > **Age Roles**."]),
-                       subtitle="Step 3 of 4 · Teen by Default", line="Step 3 of 4 · Teen by Default", icon="settings",
+                       subtitle="Step 3 of 4 · Teen by Default", icon="settings",
                        buttons=[_button("Back", "gmode", "back"),
                                 _button("Next" if s.teen_safety else "Skip", "gnext")])
 
@@ -1014,7 +1013,7 @@ class Setup(commands.Cog):
         if not can_post(channel):
             return False
         try:
-            view = panel_view(banner=channel.permissions_for(channel.guild.me).attach_files)
+            view = panel_view()
             await channel.send(view=view, files=ui_kit.files(view))
             return True
         except discord.HTTPException:

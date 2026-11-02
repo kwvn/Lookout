@@ -25,10 +25,9 @@ TIPS = [
 ]
 
 
-def tips_message(banner: bool = True) -> discord.ui.LayoutView:
+def tips_message() -> discord.ui.LayoutView:
     view = discord.ui.LayoutView(timeout=None)
-    ui_kit.head(view, "Safety Tips", ui_kit.titled(ui_kit.mascot("wave"), "Short tips for staying safe on Discord."),
-                "warning", banner=banner)
+    ui_kit.head(view, "Safety Tips", "Short tips for staying safe on Discord.", "warning", looky="wave")
     link = discord.ButtonStyle.link
     add_app = ui_kit.add_app_button()
     buttons = {

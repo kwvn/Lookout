@@ -53,7 +53,7 @@ def _group(finds: list[dict], kinds: list) -> str | None:
     return "\n".join(counts) + "\n-# Latest\n" + "\n".join(latest)
 
 
-def report_view(guild: discord.Guild, s: db.GuildSettings, banner: bool = True) -> discord.ui.LayoutView:
+def report_view(guild: discord.Guild, s: db.GuildSettings) -> discord.ui.LayoutView:
     finds = db.scan_finds(guild.id, since=s.scan_started or 0)
     days = max(1, min(SCAN_DAYS, round((time.time() - (s.scan_started or time.time())) / 86400)))
     removed, told = _group(finds, WOULD_REMOVE), _group(finds, WOULD_TELL)
@@ -73,7 +73,7 @@ def report_view(guild: discord.Guild, s: db.GuildSettings, banner: bool = True) 
         ("Would Have Told the Mods", told) if told else None,
         ("Kids Lookout Found", f"**{teens}** member{'' if teens == 1 else 's'} said they're under 18. Messages adults "
                                "send them would be checked from day one.") if teens else None,
-        subtitle=f"{name} · {span}", icon="summary", banner=banner,
+        subtitle=f"{name} · {span}", icon="summary",
         footer="Lookout keeps watching quietly until an admin turns it on. Threats and self-harm still come to you "
                "right away.",
         buttons=[discord.ui.Button(label="Turn It On", custom_id=f"{PREFIX}:on")])
@@ -111,7 +111,7 @@ class Scan(commands.Cog):
         perms = channel.permissions_for(guild.me) if channel else None
         if not (perms and perms.view_channel and perms.send_messages):
             return None
-        view = report_view(guild, s, banner=perms.attach_files)
+        view = report_view(guild, s)
         try:
             message = await channel.send(view=view, files=ui_kit.files(view),
                                          allowed_mentions=discord.AllowedMentions.none())
@@ -152,7 +152,7 @@ class Scan(commands.Cog):
             if not s.scanning:
                 return await interaction.response.send_message(view=ui_kit.note("Lookout isn't scanning, it's on."),
                                                                ephemeral=True)
-            return await interaction.response.send_message(view=report_view(guild, s, banner=False), ephemeral=True,
+            return await interaction.response.send_message(view=report_view(guild, s), ephemeral=True,
                                                            allowed_mentions=discord.AllowedMentions.none())
         if action[1] != "on":
             return

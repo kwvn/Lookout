@@ -1,5 +1,4 @@
 import datetime
-import io
 import logging
 import re
 
@@ -108,44 +107,19 @@ def _style(item):
     return item
 
 
-def _banner_name(title: str) -> str:
-    return "banner-" + (re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "lookout") + ".png"
-
-
-# a subtitle as plain text for the banner. None if it has mentions, links, more lines or is too long
-def _plain(text: str) -> str | None:
-    text = re.sub(r"<a?:\w+:\d+>", "", text)  # custom emojis
-    if "\n" in text or re.search(r"<[@#t/]|\]\(", text):
-        return None
-    text = re.sub(r"\\([*_~`|>\\])", r"\1", text.replace("**", "").replace("__", ""))
-    text = tidy(" ".join(text.removeprefix("-#").split()))
-    return text if text and chart.line_fits(text) else None
-
-
-# banner picture if there's an icon (send files(view) with it), otherwise a # title
-# the subtitle goes in the banner when it's plain enough, otherwise under it. line: drawn in the banner instead,
-# the subtitle then only shows if the banner can't be drawn
+# discord's own heading with looky in front and a grey line under it, no picture. with an icon, looky is the one that
+# goes with it (chart.LOOKY), or the looky asked for
 def head(view: ui.LayoutView, title: str, subtitle: str | None = None, icon: str | None = None,
-         thumbnail: str | None = None, banner: bool = True, line: str | None = None, looky: str | None = None) -> None:
-    if line is None and subtitle and icon and banner:
-        line = _plain(subtitle)
-    data = chart.banner(icon, title, line, looky=looky) if icon and banner else None
-    if data:
-        name = _banner_name(title)
-        view.add_item(ui.MediaGallery(discord.MediaGalleryItem(
-            f"attachment://{name}", description=f"{title} · {line}" if line else title)))
-        view.banner = (name, data)
-        if subtitle and not line:
-            view.add_item(ui.TextDisplay(tidy(_grey(subtitle))))
-        return
-    text = ui.TextDisplay(tidy(f"# {titled(icon, title) if icon else title}" + (f"\n{_grey(subtitle)}" if subtitle else "")))
+         thumbnail: str | None = None, looky: str | None = None) -> None:
+    if icon:
+        title = titled(mascot(looky or chart.LOOKY.get(icon, "watching"), icon), title)
+    text = ui.TextDisplay(tidy(f"# {title}" + (f"\n{_grey(subtitle)}" if subtitle else "")))
     view.add_item(ui.Section(text, accessory=ui.Thumbnail(thumbnail)) if thumbnail else text)
 
 
-# new File every time, a File can only be sent once
+# cards don't send pictures anymore. edits still pass this, so an old banner picture gets taken off
 def files(view: ui.LayoutView) -> list[discord.File]:
-    banner = getattr(view, "banner", None)
-    return [discord.File(io.BytesIO(banner[1]), filename=banner[0])] if banner else []
+    return []
 
 
 # title, a box per section, then footer + buttons, then the brand line
@@ -154,8 +128,7 @@ def files(view: ui.LayoutView) -> list[discord.File]:
 def card(title: str | None, *sections, subtitle: str | None = None, thumbnail: str | None = None,
          image: str | list[str] | None = None, footer: str | None = None, buttons: list | None = None,
          brand: bool = False, spoiler: bool = False, image_text: str | list[str] | None = None,
-         icon: str | None = None, banner: bool = True, line: str | None = None,
-         looky: str | None = None) -> ui.LayoutView:
+         icon: str | None = None, looky: str | None = None) -> ui.LayoutView:
     view = ui.LayoutView(timeout=None)
     if image:
         images = image if isinstance(image, list) else [image]
@@ -163,7 +136,7 @@ def card(title: str | None, *sections, subtitle: str | None = None, thumbnail: s
         view.add_item(ui.MediaGallery(*[discord.MediaGalleryItem(url, description=text, spoiler=spoiler)
                                         for url, text in zip(images, texts)]))
     if title:
-        head(view, title, subtitle, icon, thumbnail, banner, line, looky)
+        head(view, title, subtitle, icon, thumbnail, looky)
 
     for section in sections:
         if not section:

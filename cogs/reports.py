@@ -7,7 +7,6 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-import chart
 import config
 import db
 import ui_kit
@@ -75,16 +74,11 @@ def _report_modal(category: str, upload: bool, member_id: int = 0) -> discord.ui
     return modal
 
 
-def panel_view(banner: bool = True) -> discord.ui.LayoutView:
+def panel_view() -> discord.ui.LayoutView:
     view = discord.ui.LayoutView(timeout=None)
     button = discord.ui.Button(label="Report a Problem", custom_id=f"{PANEL}:open")
-    if banner and chart.banner("report", "Report a Problem"):
-        ui_kit.head(view, "Report a Problem", None, "report")
-        text = ui_kit.titled(ui_kit.mascot("noted"), "**Something wrong?**\nTell the mods privately. Only they see "
-                                                     "your report, and nobody else knows you sent it.")
-    else:
-        text = (f"## {ui_kit.titled('report', 'Report a Problem')}\nSomething wrong? Tell the mods privately. Only they "
-                "see your report.")
+    ui_kit.head(view, "Report a Problem", None, "report")
+    text = "**Something wrong?**\nTell the mods privately. Only they see your report, and nobody else knows you sent it."
     view.add_item(discord.ui.Container(discord.ui.Section(text, accessory=button)))
     lines = ["-# You can also type /report, or right-click someone or a message, then **Apps**."]
     if url := ui_kit.add_app_url():
@@ -177,7 +171,7 @@ class Reports(commands.Cog):
             return False
         async for message in channel.history(limit=50):
             if message.author.id == self.bot.user.id and _has_report_button(message):
-                view = panel_view(banner=perms.attach_files)
+                view = panel_view()
                 await message.edit(view=view, attachments=ui_kit.files(view))
                 return True
         return False
