@@ -284,7 +284,7 @@ def welcome_banner() -> bytes:
 
 
 # which looky goes in front of a card's title, by its icon (ui_kit.head). anything else gets the binoculars
-LOOKY = {"settings": "code", "help": "think", "report": "knight", "warning": "thumbsup", "brand": "popcorn",
+LOOKY = {"settings": "code", "help": "think", "report": "noted", "warning": "thumbsup", "brand": "popcorn",
          "cases": "noted"}
 
 
