@@ -23,7 +23,7 @@ log = logging.getLogger("lookout")
 EXTENSIONS = ["cogs.setup", "cogs.help", "cogs.demo", "cogs.staff", "cogs.cases", "cogs.cleanup",
               "cogs.reports", "cogs.reminder", "cogs.summary", "cogs.imagescan", "cogs.teensafety",
               "cogs.totals", "cogs.trivia", "cogs.network", "cogs.joinlog", "cogs.safecheck", "cogs.faq",
-              "cogs.welcome", "cogs.scan"]
+              "cogs.welcome", "cogs.scan", "cogs.contact"]
 # the "Playing ..." line on the bot's profile, rotates every few minutes
 STATUSES = ["Type /report for help", "Keeping teens safe", "Guarding {servers}", "/setup to get started"]
 STATUS_MINUTES = 5
